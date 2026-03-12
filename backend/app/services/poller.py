@@ -1,0 +1,227 @@
+import logging
+import threading
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.db import SessionLocal
+from app.models import Label, Rule, SystemLabelRetention, User
+from app.services.ai_service import AIService
+from app.services.gmail_service import GmailService, parse_message_details
+from app.services.rule_engine import apply_rule_actions, message_matches_rule
+
+log = logging.getLogger("poller")
+
+CATEGORY_LABEL_IDS = {
+    "CATEGORY_PROMOTIONS",
+    "CATEGORY_SOCIAL",
+    "CATEGORY_UPDATES",
+    "CATEGORY_FORUMS",
+}
+
+_timer: threading.Timer | None = None
+_running = False
+_last_poll_per_user: dict[int, datetime] = {}
+
+POLL_INTERVAL_SECONDS = 60
+
+
+def start_poller() -> None:
+    global _running
+    _running = True
+    log.info("Poller started")
+    _schedule_next()
+
+
+def stop_poller() -> None:
+    global _running, _timer
+    _running = False
+    if _timer:
+        _timer.cancel()
+        _timer = None
+    log.info("Poller stopped")
+
+
+def _schedule_next() -> None:
+    global _timer
+    if not _running:
+        return
+    _timer = threading.Timer(POLL_INTERVAL_SECONDS, _poll_tick)
+    _timer.daemon = True
+    _timer.start()
+
+
+def _poll_tick() -> None:
+    if not _running:
+        return
+    try:
+        _run_poll_cycle()
+    except Exception as exc:
+        log.error("Poll cycle error: %s", exc)
+    finally:
+        _schedule_next()
+
+
+def _run_poll_cycle() -> None:
+    db: Session = SessionLocal()
+    try:
+        users = db.scalars(select(User).where(User.polling_enabled == True)).all()  # noqa: E712
+        now = datetime.now(timezone.utc)
+
+        for user in users:
+            last_poll = _last_poll_per_user.get(user.id)
+            interval = timedelta(minutes=user.polling_interval_minutes)
+            if last_poll and (now - last_poll) < interval:
+                continue
+
+            _last_poll_per_user[user.id] = now
+            try:
+                _poll_user(user, db)
+            except Exception as exc:
+                log.error("Poll failed for user=%s: %s", user.email, exc)
+    finally:
+        db.close()
+
+
+def _poll_user(user: User, db: Session) -> None:
+    gmail = GmailService(db)
+
+    # Initialize history_id if not set
+    if not user.last_history_id:
+        profile = gmail.get_profile(user)
+        user.last_history_id = str(profile.get("historyId", ""))
+        db.commit()
+        log.info("Initialized history_id for user=%s", user.email)
+        return
+
+    # Get new messages since last history ID
+    try:
+        history = gmail.history_list(user, user.last_history_id)
+    except Exception as exc:
+        # 404 means history ID is too old, reset it
+        if "404" in str(exc):
+            profile = gmail.get_profile(user)
+            user.last_history_id = str(profile.get("historyId", ""))
+            db.commit()
+            log.warning("History ID expired for user=%s, reset", user.email)
+            return
+        raise
+
+    new_history_id = history.get("historyId")
+    history_records = history.get("history", [])
+
+    # Collect new message IDs
+    new_msg_ids: set[str] = set()
+    for record in history_records:
+        for added in record.get("messagesAdded", []):
+            msg = added.get("message", {})
+            new_msg_ids.add(msg["id"])
+
+    if new_msg_ids:
+        log.info("Processing %d new messages for user=%s", len(new_msg_ids), user.email)
+
+        # Load enabled rules
+        rules = db.scalars(
+            select(Rule).where(Rule.user_id == user.id, Rule.enabled == True)  # noqa: E712
+        ).all()
+
+        # Load user labels for AI
+        user_labels = db.scalars(
+            select(Label).where(Label.user_id == user.id, Label.label_type == "user")
+        ).all()
+        available_labels = [{"id": l.gmail_label_id, "name": l.name} for l in user_labels]
+
+        ai_service = None
+        if user.ai_enabled and user.ai_api_key:
+            ai_service = AIService(user.ai_api_key)
+
+        for msg_id in new_msg_ids:
+            try:
+                raw_msg = gmail.get_message(user, msg_id)
+                details = parse_message_details(raw_msg)
+
+                # Never mark unread emails as read - skip action_mark_read for unread
+                is_unread = details["is_unread"]
+
+                # Try rules
+                rule_matched = False
+                for rule in rules:
+                    if message_matches_rule(rule, details, db):
+                        # Respect the hard constraint: never mark unread as read
+                        if is_unread and rule.action_mark_read:
+                            # Apply other actions but skip mark_read
+                            safe_msg_ids = [msg_id]
+                            add_labels: list[str] = []
+                            remove_labels: list[str] = []
+                            if rule.action_label_id:
+                                action_label = db.scalar(
+                                    select(Label).where(Label.id == rule.action_label_id).limit(1)
+                                )
+                                if action_label:
+                                    add_labels.append(action_label.gmail_label_id)
+                            if rule.action_archive:
+                                remove_labels.append("INBOX")
+                            if rule.action_delete:
+                                gmail.batch_trash_messages(user, safe_msg_ids)
+                            elif add_labels or remove_labels:
+                                gmail.batch_modify_messages(
+                                    user, safe_msg_ids,
+                                    add_labels=add_labels or None,
+                                    remove_labels=remove_labels or None,
+                                )
+                        else:
+                            apply_rule_actions(rule, [msg_id], gmail, user, db)
+                        rule_matched = True
+                        break
+
+                # AI classification for Primary inbox messages only
+                if not rule_matched and ai_service and available_labels:
+                    label_ids = details["label_ids"]
+                    is_primary = not any(lid in CATEGORY_LABEL_IDS for lid in label_ids)
+                    if is_primary:
+                        label_id = ai_service.classify_email(
+                            details["from"], details["subject"], details["body"],
+                            available_labels,
+                        )
+                        if label_id:
+                            gmail.modify_message(user, msg_id, add_labels=[label_id])
+                            log.info("AI classified msg=%s with label=%s", msg_id, label_id)
+
+            except Exception as exc:
+                log.error("Failed to process msg=%s: %s", msg_id, exc)
+
+    # Run retention cleanup
+    _run_retention_cleanup(user, gmail, db)
+
+    # Update history ID
+    if new_history_id:
+        user.last_history_id = str(new_history_id)
+        db.commit()
+
+
+def _run_retention_cleanup(user: User, gmail: GmailService, db: Session) -> None:
+    retentions = db.scalars(
+        select(SystemLabelRetention).where(
+            SystemLabelRetention.user_id == user.id,
+            SystemLabelRetention.enabled == True,  # noqa: E712
+        )
+    ).all()
+
+    for retention in retentions:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retention.retention_days)
+        cutoff_str = cutoff.strftime("%Y/%m/%d")
+        query = f"label:{retention.category} before:{cutoff_str}"
+
+        try:
+            result = gmail.list_messages(user, query=query, max_results=100)
+            messages = result.get("messages", [])
+            if messages:
+                msg_ids = [m["id"] for m in messages]
+                gmail.batch_trash_messages(user, msg_ids)
+                log.info(
+                    "Retention cleanup: trashed %d %s messages older than %d days for user=%s",
+                    len(msg_ids), retention.category, retention.retention_days, user.email,
+                )
+        except Exception as exc:
+            log.error("Retention cleanup failed for %s: %s", retention.category, exc)

@@ -1,0 +1,296 @@
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
+
+const FETCH_OPTS: RequestInit = { credentials: "include" };
+
+function handle401(response: Response, redirectOn401: boolean): void {
+  if (response.status === 401) {
+    if (redirectOn401) {
+      window.location.href = "/";
+    }
+    throw new Error("Unauthorized");
+  }
+}
+
+// --- Types ---
+
+export type Status = {
+  connected: boolean;
+  email: string | null;
+  display_name: string | null;
+  profile_picture_url: string | null;
+  ai_enabled: boolean;
+  ai_provider: string | null;
+  polling_enabled: boolean;
+  polling_interval_minutes: number;
+};
+
+export type LabelItem = {
+  id: number;
+  gmail_label_id: string;
+  name: string;
+  label_type: string;
+  color_bg: string | null;
+  color_text: string | null;
+  message_count: number;
+  unread_count: number;
+  synced_at: string | null;
+};
+
+export type RuleItem = {
+  id: number;
+  name: string;
+  enabled: boolean;
+  match_from: string | null;
+  match_to: string | null;
+  match_subject: string | null;
+  match_has_words: string | null;
+  match_doesnt_have: string | null;
+  match_label_id: number | null;
+  action_label_id: number | null;
+  action_archive: boolean;
+  action_delete: boolean;
+  action_mark_read: boolean;
+  action_delete_after_days: number | null;
+  scope_promotions: boolean;
+  scope_social: boolean;
+  scope_updates: boolean;
+  scope_forums: boolean;
+  use_ai: boolean;
+  ai_prompt: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RuleCreate = {
+  name: string;
+  enabled?: boolean;
+  match_from?: string | null;
+  match_to?: string | null;
+  match_subject?: string | null;
+  match_has_words?: string | null;
+  match_doesnt_have?: string | null;
+  match_label_id?: number | null;
+  action_label_id?: number | null;
+  action_archive?: boolean;
+  action_delete?: boolean;
+  action_mark_read?: boolean;
+  action_delete_after_days?: number | null;
+  scope_promotions?: boolean;
+  scope_social?: boolean;
+  scope_updates?: boolean;
+  scope_forums?: boolean;
+  use_ai?: boolean;
+  ai_prompt?: string | null;
+};
+
+export type CleanupItem = {
+  id: number;
+  label_filter: string | null;
+  date_from: string | null;
+  date_to: string | null;
+  action: string;
+  status: string;
+  total_messages: number;
+  processed_messages: number;
+  created_at: string;
+  completed_at: string | null;
+};
+
+export type SettingsUpdate = {
+  ai_enabled?: boolean;
+  ai_provider?: string | null;
+  ai_api_key?: string | null;
+  polling_enabled?: boolean;
+  polling_interval_minutes?: number;
+};
+
+export type RetentionItem = {
+  category: string;
+  retention_days: number;
+  enabled: boolean;
+};
+
+export type RetentionData = {
+  items: RetentionItem[];
+};
+
+// --- Helpers ---
+
+async function getJson<T>(path: string, redirectOn401 = true): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, FETCH_OPTS);
+  handle401(response, redirectOn401);
+  if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+  return (await response.json()) as T;
+}
+
+async function postJson<T>(path: string, body?: unknown, redirectOn401 = true): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...FETCH_OPTS,
+    method: "POST",
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  handle401(response, redirectOn401);
+  if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+  return (await response.json()) as T;
+}
+
+async function putJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...FETCH_OPTS,
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  handle401(response, true);
+  if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+  return (await response.json()) as T;
+}
+
+async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...FETCH_OPTS,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  handle401(response, true);
+  if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+  return (await response.json()) as T;
+}
+
+async function deleteReq(path: string): Promise<void> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...FETCH_OPTS,
+    method: "DELETE",
+  });
+  handle401(response, true);
+  if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+}
+
+// --- Auth ---
+
+export async function fetchStatus(): Promise<Status | null> {
+  const response = await fetch(`${API_BASE}/settings`, FETCH_OPTS);
+  if (response.status === 401) return null;
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+  return (await response.json()) as Status;
+}
+
+export async function login(): Promise<boolean> {
+  const response = await fetch(`${API_BASE}/auth/login`, {
+    ...FETCH_OPTS,
+    method: "POST",
+  });
+  if (response.ok) return true;
+  if (response.status === 401 || response.status === 404) return false;
+  throw new Error(`Login failed: ${response.status}`);
+}
+
+export async function logout(): Promise<void> {
+  const response = await fetch(`${API_BASE}/auth/logout`, {
+    ...FETCH_OPTS,
+    method: "POST",
+  });
+  handle401(response, true);
+  if (!response.ok) throw new Error(`Logout failed: ${response.status}`);
+}
+
+export async function disconnectGoogle(): Promise<void> {
+  await deleteReq("/auth/google/disconnect");
+}
+
+// --- Labels ---
+
+export async function fetchLabels(): Promise<LabelItem[]> {
+  return getJson<LabelItem[]>("/labels");
+}
+
+export async function syncLabels(): Promise<{ synced: number }> {
+  return postJson("/labels/sync");
+}
+
+export async function createLabel(name: string, bg_color?: string, text_color?: string): Promise<LabelItem> {
+  return postJson("/labels", { name, bg_color, text_color });
+}
+
+export async function updateLabel(id: number, body: { name?: string; bg_color?: string; text_color?: string }): Promise<LabelItem> {
+  return patchJson(`/labels/${id}`, body);
+}
+
+export async function deleteLabel(id: number): Promise<void> {
+  await deleteReq(`/labels/${id}`);
+}
+
+// --- Rules ---
+
+export async function fetchRules(): Promise<RuleItem[]> {
+  return getJson<RuleItem[]>("/rules");
+}
+
+export async function createRule(rule: RuleCreate): Promise<RuleItem> {
+  return postJson("/rules", rule);
+}
+
+export async function updateRule(id: number, rule: RuleCreate): Promise<RuleItem> {
+  return putJson(`/rules/${id}`, rule);
+}
+
+export async function deleteRule(id: number): Promise<void> {
+  await deleteReq(`/rules/${id}`);
+}
+
+export async function runRule(id: number): Promise<{ matched: number; processed: number }> {
+  return postJson(`/rules/${id}/run`);
+}
+
+// --- Cleanup ---
+
+export async function startCleanup(body: {
+  label_filter?: string;
+  date_from?: string;
+  date_to?: string;
+  action: string;
+}): Promise<CleanupItem> {
+  return postJson("/cleanup", body);
+}
+
+export async function fetchCleanups(): Promise<CleanupItem[]> {
+  return getJson<CleanupItem[]>("/cleanup");
+}
+
+export async function previewCleanup(body: {
+  label_filter?: string;
+  date_from?: string;
+  date_to?: string;
+}): Promise<{ estimated_count: number }> {
+  return postJson("/cleanup/preview", body);
+}
+
+export async function retroactiveClassification(body: {
+  date_from: string;
+  date_to: string;
+  use_ai?: boolean;
+}): Promise<{
+  total_processed: number;
+  rule_matched: number;
+  ai_classified: number;
+  skipped_unread: number;
+}> {
+  return postJson("/cleanup/retroactive", body);
+}
+
+// --- Settings ---
+
+export async function updateSettings(settings: SettingsUpdate): Promise<Status> {
+  return patchJson("/settings", settings);
+}
+
+export async function fetchRetention(): Promise<RetentionData> {
+  return getJson<RetentionData>("/settings/retention");
+}
+
+export async function updateRetention(items: RetentionItem[]): Promise<RetentionData> {
+  return putJson("/settings/retention", { items });
+}
