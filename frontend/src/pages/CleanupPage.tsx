@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { CleanupItem, fetchCleanups, startCleanup, previewCleanup, retroactiveClassification } from "../lib/api";
+import { formatCleanupDateRange } from "../lib/format";
 
 export function CleanupPage() {
   const [cleanups, setCleanups] = useState<CleanupItem[]>([]);
@@ -240,9 +241,7 @@ export function CleanupPage() {
                   <td className="px-4 py-3 font-medium text-gray-900 capitalize">{job.action}</td>
                   <td className="px-4 py-3 text-gray-600">{job.label_filter || "All"}</td>
                   <td className="px-4 py-3 text-gray-600">
-                    {job.date_from ? new Date(job.date_from).toLocaleDateString() : "Any"}
-                    {" - "}
-                    {job.date_to ? new Date(job.date_to).toLocaleDateString() : "Any"}
+                    {formatCleanupDateRange(job.date_from, job.date_to)}
                   </td>
                   <td className="px-4 py-3 text-right text-gray-600">{job.processed_messages}</td>
                   <td className="px-4 py-3 text-right">

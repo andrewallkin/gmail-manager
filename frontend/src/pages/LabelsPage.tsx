@@ -42,6 +42,8 @@ export function LabelsPage() {
   const [editBg, setEditBg] = useState("");
   const [editText, setEditText] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
+  const [typeFilter, setTypeFilter] = useState<"all" | "user" | "system">("user");
+  const [typeSortDirection, setTypeSortDirection] = useState<"asc" | "desc" | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -127,11 +129,41 @@ export function LabelsPage() {
     );
   }
 
+  const filtered = labels.filter((l) => typeFilter === "all" || l.label_type === typeFilter);
+  const displayed = typeSortDirection
+    ? [...filtered].sort((a, b) => {
+        const cmp = a.label_type.localeCompare(b.label_type);
+        if (cmp !== 0) return typeSortDirection === "asc" ? cmp : -cmp;
+        return a.name.localeCompare(b.name);
+      })
+    : filtered;
+
+  const cycleTypeSort = () => {
+    setTypeSortDirection((d) => (d === null ? "asc" : d === "asc" ? "desc" : null));
+  };
+
+  const emptyMessage =
+    typeFilter === "all"
+      ? "No labels found. Click \"Sync from Gmail\" to import your labels."
+      : typeFilter === "user"
+        ? "No user labels found."
+        : "No system labels found.";
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Labels</h1>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-4">
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value as "all" | "user" | "system")}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+          >
+            <option value="all">All labels</option>
+            <option value="user">User labels</option>
+            <option value="system">System labels</option>
+          </select>
+          <div className="flex gap-2">
           <button
             onClick={handleSync}
             disabled={syncing}
@@ -145,6 +177,7 @@ export function LabelsPage() {
           >
             Create Label
           </button>
+          </div>
         </div>
       </div>
 
@@ -188,14 +221,24 @@ export function LabelsPage() {
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
               <th className="text-left px-4 py-3 font-medium text-gray-500">Name</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-500">Type</th>
+              <th className="text-left px-4 py-3 font-medium text-gray-500">
+                <button
+                  type="button"
+                  onClick={cycleTypeSort}
+                  className="flex items-center gap-1 hover:text-gray-700 cursor-pointer"
+                >
+                  Type
+                  {typeSortDirection === "asc" && <span className="text-xs">↑</span>}
+                  {typeSortDirection === "desc" && <span className="text-xs">↓</span>}
+                </button>
+              </th>
               <th className="text-right px-4 py-3 font-medium text-gray-500">Messages</th>
               <th className="text-right px-4 py-3 font-medium text-gray-500">Unread</th>
               <th className="text-right px-4 py-3 font-medium text-gray-500">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {labels.map((label) => (
+            {displayed.map((label) => (
               <tr key={label.id} className="hover:bg-gray-50">
                 <td className="px-4 py-3">
                   {editingId === label.id ? (
@@ -264,10 +307,10 @@ export function LabelsPage() {
                 </td>
               </tr>
             ))}
-            {labels.length === 0 && (
+            {displayed.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-4 py-8 text-center text-gray-500">
-                  No labels found. Click "Sync from Gmail" to import your labels.
+                  {emptyMessage}
                 </td>
               </tr>
             )}

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchLabels, fetchRules, fetchCleanups, fetchStatus, syncLabels, runRule, LabelItem, RuleItem, CleanupItem, Status } from "../lib/api";
+import { formatCleanupDateRange } from "../lib/format";
 
 export function DashboardPage() {
   const [labels, setLabels] = useState<LabelItem[]>([]);
@@ -117,21 +118,18 @@ export function DashboardPage() {
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Recent Cleanup Jobs</h2>
           <div className="space-y-3">
             {recentCleanups.map((job) => (
-              <div key={job.id} className="flex items-center justify-between text-sm">
-                <div>
-                  <span className="font-medium capitalize">{job.action}</span>
-                  {job.label_filter && <span className="text-gray-500 ml-2">({job.label_filter})</span>}
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-gray-500">{job.processed_messages} messages</span>
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                    job.status === "completed" ? "bg-green-100 text-green-700" :
-                    job.status === "failed" ? "bg-red-100 text-red-700" :
-                    "bg-yellow-100 text-yellow-700"
-                  }`}>
-                    {job.status}
-                  </span>
-                </div>
+              <div key={job.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                <span className="font-medium capitalize text-gray-900">{job.action}</span>
+                <span className="text-gray-600">{job.label_filter || "All"}</span>
+                <span className="text-gray-600">{formatCleanupDateRange(job.date_from, job.date_to)}</span>
+                <span className="text-gray-500">{job.processed_messages} messages</span>
+                <span className={`ml-auto px-2 py-0.5 rounded-full text-xs font-medium ${
+                  job.status === "completed" ? "bg-green-100 text-green-700" :
+                  job.status === "failed" ? "bg-red-100 text-red-700" :
+                  "bg-yellow-100 text-yellow-700"
+                }`}>
+                  {job.status}
+                </span>
               </div>
             ))}
           </div>
