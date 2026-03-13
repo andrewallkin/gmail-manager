@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -11,6 +11,7 @@ from app.deps import require_jwt_user
 from app.models import CleanupJob, Label, Rule, User
 from app.services.ai_service import AIService
 from app.services.gmail_service import GmailService, parse_message_details
+from app.services.inbox_rules import should_auto_remove_inbox
 from app.services.rule_engine import apply_rule_actions, message_matches_rule
 
 router = APIRouter(prefix="/api/cleanup", tags=["cleanup"])
@@ -50,6 +51,7 @@ class RetroactiveRequest(BaseModel):
     date_from: str
     date_to: str
     use_ai: bool = False
+    max_messages: int = Field(default=50, ge=1, le=50)
 
 
 def _build_cleanup_query(label_filter: str | None, date_from: str | None, date_to: str | None) -> str:
@@ -91,7 +93,7 @@ def retroactive_classification(
 ) -> dict:
     gmail = GmailService(db)
 
-    # Only process Primary inbox read emails
+    # Process Primary inbox emails (read and unread)
     query = (
         f"in:inbox -category:promotions -category:social -category:updates -category:forums "
         f"after:{body.date_from[:10]} before:{body.date_to[:10]}"
@@ -108,29 +110,37 @@ def retroactive_classification(
     user_labels = db.scalars(
         select(Label).where(Label.user_id == user.id, Label.label_type == "user")
     ).all()
-    available_labels = [{"id": l.gmail_label_id, "name": l.name} for l in user_labels]
+    available_labels = [
+        {"id": l.gmail_label_id, "name": l.name, "description": l.ai_description}
+        for l in user_labels
+    ]
+    label_name_by_id = {l.gmail_label_id: l.name for l in user_labels}
 
     total_processed = 0
     rule_matched_count = 0
     ai_classified_count = 0
-    skipped_unread = 0
 
     page_token = None
     while True:
-        result = gmail.list_messages(user, query=query, max_results=50, page_token=page_token)
+        remaining = body.max_messages - total_processed
+        if remaining <= 0:
+            break
+        result = gmail.list_messages(
+            user,
+            query=query,
+            max_results=min(50, remaining),
+            page_token=page_token,
+        )
         messages = result.get("messages", [])
         if not messages:
             break
 
         for msg_ref in messages:
+            if total_processed >= body.max_messages:
+                break
             try:
                 raw_msg = gmail.get_message(user, msg_ref["id"])
                 details = parse_message_details(raw_msg)
-
-                # Hard constraint: skip unread emails entirely
-                if details["is_unread"]:
-                    skipped_unread += 1
-                    continue
 
                 total_processed += 1
 
@@ -138,7 +148,15 @@ def retroactive_classification(
                 matched = False
                 for rule in rules:
                     if message_matches_rule(rule, details, db):
-                        apply_rule_actions(rule, [msg_ref["id"]], gmail, user, db)
+                        apply_rule_actions(
+                            rule,
+                            [msg_ref["id"]],
+                            gmail,
+                            user,
+                            db,
+                            message_details_by_id={msg_ref["id"]: details},
+                            skip_mark_read=details["is_unread"] and rule.action_mark_read,
+                        )
                         rule_matched_count += 1
                         matched = True
                         break
@@ -150,7 +168,20 @@ def retroactive_classification(
                         available_labels,
                     )
                     if label_id:
-                        gmail.modify_message(user, msg_ref["id"], add_labels=[label_id])
+                        remove_labels = None
+                        if should_auto_remove_inbox(
+                            user=user,
+                            label_name=label_name_by_id.get(label_id),
+                            label_ids=details["label_ids"],
+                            is_unread=details["is_unread"],
+                        ):
+                            remove_labels = ["INBOX"]
+                        gmail.modify_message(
+                            user,
+                            msg_ref["id"],
+                            add_labels=[label_id],
+                            remove_labels=remove_labels,
+                        )
                         ai_classified_count += 1
 
             except Exception as exc:
@@ -161,14 +192,14 @@ def retroactive_classification(
             break
 
     log.info(
-        "Retroactive classification: processed=%d rule_matched=%d ai_classified=%d skipped_unread=%d",
-        total_processed, rule_matched_count, ai_classified_count, skipped_unread,
+        "Retroactive classification: processed=%d rule_matched=%d ai_classified=%d max=%d",
+        total_processed, rule_matched_count, ai_classified_count, body.max_messages,
     )
     return {
         "total_processed": total_processed,
         "rule_matched": rule_matched_count,
         "ai_classified": ai_classified_count,
-        "skipped_unread": skipped_unread,
+        "max_messages": body.max_messages,
     }
 
 

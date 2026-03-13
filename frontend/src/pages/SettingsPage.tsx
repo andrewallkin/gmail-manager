@@ -6,12 +6,7 @@ type Props = {
   onStatusChange: (s: Status | null) => void;
 };
 
-const RETENTION_CATEGORIES = ["promotions", "social", "updates", "forums"];
-
 export function SettingsPage({ status, onStatusChange }: Props) {
-  const [aiEnabled, setAiEnabled] = useState(status.ai_enabled);
-  const [aiProvider, setAiProvider] = useState(status.ai_provider ?? "");
-  const [aiApiKey, setAiApiKey] = useState("");
   const [pollingEnabled, setPollingEnabled] = useState(status.polling_enabled);
   const [pollingInterval, setPollingInterval] = useState(status.polling_interval_minutes);
   const [saving, setSaving] = useState(false);
@@ -34,15 +29,11 @@ export function SettingsPage({ status, onStatusChange }: Props) {
     setSaved(false);
     try {
       const updated = await updateSettings({
-        ai_enabled: aiEnabled,
-        ai_provider: aiProvider || null,
-        ai_api_key: aiApiKey || null,
         polling_enabled: pollingEnabled,
         polling_interval_minutes: pollingInterval,
       });
       onStatusChange(updated);
       setSaved(true);
-      setAiApiKey("");
       setTimeout(() => setSaved(false), 3000);
     } catch {} finally { setSaving(false); }
   };
@@ -131,51 +122,6 @@ export function SettingsPage({ status, onStatusChange }: Props) {
             </div>
           </div>
         )}
-      </div>
-
-      <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-gray-900">AI Configuration</h2>
-        <p className="text-sm text-gray-500">
-          Enable AI-powered email categorization for rules that have AI enabled.
-        </p>
-
-        <label className="flex items-center gap-2 text-sm text-gray-700">
-          <input
-            type="checkbox"
-            checked={aiEnabled}
-            onChange={(e) => setAiEnabled(e.target.checked)}
-            className="rounded border-gray-300"
-          />
-          Enable AI features
-        </label>
-
-        {aiEnabled && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">AI Provider</label>
-              <select
-                value={aiProvider}
-                onChange={(e) => setAiProvider(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-              >
-                <option value="">Select provider</option>
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">API Key</label>
-              <input
-                type="password"
-                value={aiApiKey}
-                onChange={(e) => setAiApiKey(e.target.value)}
-                placeholder="Enter API key"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <p className="mt-1 text-xs text-gray-400">Leave blank to keep existing key</p>
-            </div>
-          </div>
-        )}
 
         <div className="flex items-center gap-3 pt-2">
           <button
@@ -183,9 +129,9 @@ export function SettingsPage({ status, onStatusChange }: Props) {
             disabled={saving}
             className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition-colors"
           >
-            {saving ? "Saving..." : "Save Settings"}
+            {saving ? "Saving..." : "Save Polling Settings"}
           </button>
-          {saved && <span className="text-sm text-green-600">Settings saved</span>}
+          {saved && <span className="text-sm text-green-600">Polling settings saved</span>}
         </div>
       </div>
 

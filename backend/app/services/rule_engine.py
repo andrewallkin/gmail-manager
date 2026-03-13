@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.models import Label, Rule, User
 from app.services.gmail_service import GmailService
+from app.services.gmail_service import parse_message_details
+from app.services.inbox_rules import should_auto_remove_inbox
 
 log = logging.getLogger("rules")
 
@@ -63,6 +65,8 @@ def apply_rule_actions(
     gmail: GmailService,
     user: User,
     db: Session,
+    message_details_by_id: dict[str, dict] | None = None,
+    skip_mark_read: bool = False,
 ) -> int:
     """Apply label/archive/delete/mark_read actions to messages. Returns count processed."""
     if not msg_ids:
@@ -71,6 +75,7 @@ def apply_rule_actions(
     add_labels: list[str] = []
     remove_labels: list[str] = []
 
+    action_label = None
     if rule.action_label_id:
         action_label = db.scalar(select(Label).where(Label.id == rule.action_label_id).limit(1))
         if action_label:
@@ -79,12 +84,37 @@ def apply_rule_actions(
     if rule.action_archive:
         remove_labels.append("INBOX")
 
-    if rule.action_mark_read:
+    if rule.action_mark_read and not skip_mark_read:
         remove_labels.append("UNREAD")
 
     if rule.action_delete:
         gmail.batch_trash_messages(user, msg_ids)
     elif add_labels or remove_labels:
+        should_apply_conditional_inbox_rule = bool(
+            action_label
+            and user.auto_remove_inbox_labeled_read
+            and action_label.name.strip().lower() != "unclassified"
+        )
+        if should_apply_conditional_inbox_rule:
+            for msg_id in msg_ids:
+                details = (message_details_by_id or {}).get(msg_id)
+                if details is None:
+                    details = parse_message_details(gmail.get_message(user, msg_id))
+                remove_for_msg = list(remove_labels)
+                if should_auto_remove_inbox(
+                    user=user,
+                    label_name=action_label.name if action_label else None,
+                    label_ids=details.get("label_ids", []),
+                    is_unread=details.get("is_unread", False),
+                ) and "INBOX" not in remove_for_msg:
+                    remove_for_msg.append("INBOX")
+                gmail.modify_message(
+                    user,
+                    msg_id,
+                    add_labels=add_labels or None,
+                    remove_labels=remove_for_msg or None,
+                )
+            return len(msg_ids)
         gmail.batch_modify_messages(
             user, msg_ids,
             add_labels=add_labels or None,

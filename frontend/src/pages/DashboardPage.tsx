@@ -114,25 +114,41 @@ export function DashboardPage() {
       </div>
 
       {recentCleanups.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Recent Cleanup Jobs</h2>
-          <div className="space-y-3">
-            {recentCleanups.map((job) => (
-              <div key={job.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-                <span className="font-medium capitalize text-gray-900">{job.action}</span>
-                <span className="text-gray-600">{job.label_filter || "All"}</span>
-                <span className="text-gray-600">{formatCleanupDateRange(job.date_from, job.date_to)}</span>
-                <span className="text-gray-500">{job.processed_messages} messages</span>
-                <span className={`ml-auto px-2 py-0.5 rounded-full text-xs font-medium ${
-                  job.status === "completed" ? "bg-green-100 text-green-700" :
-                  job.status === "failed" ? "bg-red-100 text-red-700" :
-                  "bg-yellow-100 text-yellow-700"
-                }`}>
-                  {job.status}
-                </span>
-              </div>
-            ))}
-          </div>
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <h2 className="text-lg font-semibold text-gray-900 px-6 py-4 border-b border-gray-200">Recent Cleanup Jobs</h2>
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 border-b border-gray-200">
+              <tr>
+                <th className="text-left px-4 py-3 font-medium text-gray-500">Action</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-500">Label</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-500">Date Range</th>
+                <th className="text-right px-4 py-3 font-medium text-gray-500">Messages</th>
+                <th className="text-right px-4 py-3 font-medium text-gray-500">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {recentCleanups.map((job) => (
+                <tr key={job.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-3 font-medium text-gray-900 capitalize">{job.action}</td>
+                  <td className="px-4 py-3 text-gray-600">{job.label_filter || "All"}</td>
+                  <td className="px-4 py-3 text-gray-600">
+                    {formatCleanupDateRange(job.date_from, job.date_to)}
+                  </td>
+                  <td className="px-4 py-3 text-right text-gray-600">{job.processed_messages}</td>
+                  <td className="px-4 py-3 text-right">
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                      job.status === "completed" ? "bg-green-100 text-green-700" :
+                      job.status === "failed" ? "bg-red-100 text-red-700" :
+                      job.status === "running" ? "bg-blue-100 text-blue-700" :
+                      "bg-yellow-100 text-yellow-700"
+                    }`}>
+                      {job.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

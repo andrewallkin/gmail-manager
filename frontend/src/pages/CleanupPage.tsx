@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CleanupItem, fetchCleanups, startCleanup, previewCleanup, retroactiveClassification } from "../lib/api";
+import { CleanupItem, fetchCleanups, startCleanup, previewCleanup } from "../lib/api";
 import { formatCleanupDateRange } from "../lib/format";
 
 export function CleanupPage() {
@@ -14,18 +14,6 @@ export function CleanupPage() {
   const [previewing, setPreviewing] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [successResult, setSuccessResult] = useState<CleanupItem | null>(null);
-
-  // Retroactive state
-  const [retroFrom, setRetroFrom] = useState("");
-  const [retroTo, setRetroTo] = useState("");
-  const [retroUseAi, setRetroUseAi] = useState(false);
-  const [retroRunning, setRetroRunning] = useState(false);
-  const [retroResult, setRetroResult] = useState<{
-    total_processed: number;
-    rule_matched: number;
-    ai_classified: number;
-    skipped_unread: number;
-  } | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -74,20 +62,6 @@ export function CleanupPage() {
       setPreviewCount(null);
       load();
     } catch {} finally { setSubmitting(false); }
-  };
-
-  const handleRetroactive = async () => {
-    if (!retroFrom || !retroTo) return;
-    setRetroRunning(true);
-    setRetroResult(null);
-    try {
-      const result = await retroactiveClassification({
-        date_from: retroFrom,
-        date_to: retroTo,
-        use_ai: retroUseAi,
-      });
-      setRetroResult(result);
-    } catch {} finally { setRetroRunning(false); }
   };
 
   return (
@@ -188,61 +162,6 @@ export function CleanupPage() {
                 )}
               </div>
             )}
-          </div>
-        )}
-      </div>
-
-      <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-gray-900">Retroactive Classification</h2>
-        <p className="text-sm text-gray-500">
-          Run rules (and optionally AI) on old read emails in a date range. Primary inbox only. Unread emails are always skipped.
-        </p>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">From Date</label>
-            <input
-              type="date"
-              value={retroFrom}
-              onChange={(e) => setRetroFrom(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">To Date</label>
-            <input
-              type="date"
-              value={retroTo}
-              onChange={(e) => setRetroTo(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-        </div>
-
-        <label className="flex items-center gap-2 text-sm text-gray-700">
-          <input
-            type="checkbox"
-            checked={retroUseAi}
-            onChange={(e) => setRetroUseAi(e.target.checked)}
-            className="rounded border-gray-300"
-          />
-          Enable AI fallback (requires AI to be configured in Settings)
-        </label>
-
-        <button
-          onClick={handleRetroactive}
-          disabled={retroRunning || !retroFrom || !retroTo}
-          className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition-colors"
-        >
-          {retroRunning ? "Running..." : "Run Retroactive Classification"}
-        </button>
-
-        {retroResult && (
-          <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-800 space-y-1">
-            <div>Processed: {retroResult.total_processed} emails</div>
-            <div>Rule matched: {retroResult.rule_matched}</div>
-            <div>AI classified: {retroResult.ai_classified}</div>
-            <div>Skipped (unread): {retroResult.skipped_unread}</div>
           </div>
         )}
       </div>

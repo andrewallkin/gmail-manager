@@ -4,6 +4,7 @@ import { Layout } from "./components/Layout";
 import { Status, fetchStatus } from "./lib/api";
 import { CleanupPage } from "./pages/CleanupPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { AIPage } from "./pages/AIPage";
 import { LabelsPage } from "./pages/LabelsPage";
 import { Login } from "./pages/Login";
 import { RulesPage } from "./pages/RulesPage";
@@ -52,6 +53,10 @@ export default function App() {
           <Route path="labels" element={<LabelsPage />} />
           <Route path="rules" element={<RulesPage />} />
           <Route path="cleanup" element={<CleanupPage />} />
+          <Route
+            path="ai"
+            element={<AIPage status={status} onStatusChange={setStatus} />}
+          />
           <Route
             path="settings"
             element={<SettingsPage status={status} onStatusChange={setStatus} />}

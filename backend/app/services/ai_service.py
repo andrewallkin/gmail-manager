@@ -21,7 +21,13 @@ class AIService:
         available_labels: list of {"id": gmail_label_id, "name": label_name}
         Returns gmail_label_id or None if no match.
         """
-        label_list = "\n".join(f"- {l['name']} (ID: {l['id']})" for l in available_labels)
+        label_lines = []
+        for label in available_labels:
+            line = f"- {label['name']} (ID: {label['id']})"
+            if label.get("description"):
+                line += f" - Context: {label['description']}"
+            label_lines.append(line)
+        label_list = "\n".join(label_lines)
         valid_ids = {l["id"] for l in available_labels}
 
         system_prompt = (

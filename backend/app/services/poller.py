@@ -10,16 +10,10 @@ from app.db import SessionLocal
 from app.models import Label, Rule, SystemLabelRetention, User
 from app.services.ai_service import AIService
 from app.services.gmail_service import GmailService, parse_message_details
+from app.services.inbox_rules import is_primary_inbox_message, should_auto_remove_inbox
 from app.services.rule_engine import apply_rule_actions, message_matches_rule
 
 log = logging.getLogger("poller")
-
-CATEGORY_LABEL_IDS = {
-    "CATEGORY_PROMOTIONS",
-    "CATEGORY_SOCIAL",
-    "CATEGORY_UPDATES",
-    "CATEGORY_FORUMS",
-}
 
 _timer: threading.Timer | None = None
 _running = False
@@ -131,7 +125,11 @@ def _poll_user(user: User, db: Session) -> None:
         user_labels = db.scalars(
             select(Label).where(Label.user_id == user.id, Label.label_type == "user")
         ).all()
-        available_labels = [{"id": l.gmail_label_id, "name": l.name} for l in user_labels]
+        available_labels = [
+            {"id": l.gmail_label_id, "name": l.name, "description": l.ai_description}
+            for l in user_labels
+        ]
+        label_name_by_id = {l.gmail_label_id: l.name for l in user_labels}
 
         ai_service = None
         if user.ai_enabled and user.ai_api_key:
@@ -149,44 +147,37 @@ def _poll_user(user: User, db: Session) -> None:
                 rule_matched = False
                 for rule in rules:
                     if message_matches_rule(rule, details, db):
-                        # Respect the hard constraint: never mark unread as read
-                        if is_unread and rule.action_mark_read:
-                            # Apply other actions but skip mark_read
-                            safe_msg_ids = [msg_id]
-                            add_labels: list[str] = []
-                            remove_labels: list[str] = []
-                            if rule.action_label_id:
-                                action_label = db.scalar(
-                                    select(Label).where(Label.id == rule.action_label_id).limit(1)
-                                )
-                                if action_label:
-                                    add_labels.append(action_label.gmail_label_id)
-                            if rule.action_archive:
-                                remove_labels.append("INBOX")
-                            if rule.action_delete:
-                                gmail.batch_trash_messages(user, safe_msg_ids)
-                            elif add_labels or remove_labels:
-                                gmail.batch_modify_messages(
-                                    user, safe_msg_ids,
-                                    add_labels=add_labels or None,
-                                    remove_labels=remove_labels or None,
-                                )
-                        else:
-                            apply_rule_actions(rule, [msg_id], gmail, user, db)
+                        apply_rule_actions(
+                            rule,
+                            [msg_id],
+                            gmail,
+                            user,
+                            db,
+                            message_details_by_id={msg_id: details},
+                            skip_mark_read=is_unread and rule.action_mark_read,
+                        )
                         rule_matched = True
                         break
 
                 # AI classification for Primary inbox messages only
                 if not rule_matched and ai_service and available_labels:
                     label_ids = details["label_ids"]
-                    is_primary = not any(lid in CATEGORY_LABEL_IDS for lid in label_ids)
+                    is_primary = is_primary_inbox_message(label_ids)
                     if is_primary:
                         label_id = ai_service.classify_email(
                             details["from"], details["subject"], details["body"],
                             available_labels,
                         )
                         if label_id:
-                            gmail.modify_message(user, msg_id, add_labels=[label_id])
+                            remove_labels = None
+                            if should_auto_remove_inbox(
+                                user=user,
+                                label_name=label_name_by_id.get(label_id),
+                                label_ids=label_ids,
+                                is_unread=is_unread,
+                            ):
+                                remove_labels = ["INBOX"]
+                            gmail.modify_message(user, msg_id, add_labels=[label_id], remove_labels=remove_labels)
                             log.info("AI classified msg=%s with label=%s", msg_id, label_id)
 
             except httpx.HTTPStatusError as exc:

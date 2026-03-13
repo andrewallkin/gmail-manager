@@ -20,6 +20,7 @@ export type Status = {
   profile_picture_url: string | null;
   ai_enabled: boolean;
   ai_provider: string | null;
+  auto_remove_inbox_labeled_read: boolean;
   polling_enabled: boolean;
   polling_interval_minutes: number;
 };
@@ -31,6 +32,7 @@ export type LabelItem = {
   label_type: string;
   color_bg: string | null;
   color_text: string | null;
+  ai_description: string | null;
   message_count: number;
   unread_count: number;
   synced_at: string | null;
@@ -100,6 +102,7 @@ export type SettingsUpdate = {
   ai_enabled?: boolean;
   ai_provider?: string | null;
   ai_api_key?: string | null;
+  auto_remove_inbox_labeled_read?: boolean;
   polling_enabled?: boolean;
   polling_interval_minutes?: number;
 };
@@ -215,7 +218,10 @@ export async function createLabel(name: string, bg_color?: string, text_color?: 
   return postJson("/labels", { name, bg_color, text_color });
 }
 
-export async function updateLabel(id: number, body: { name?: string; bg_color?: string; text_color?: string }): Promise<LabelItem> {
+export async function updateLabel(
+  id: number,
+  body: { name?: string; bg_color?: string; text_color?: string; ai_description?: string }
+): Promise<LabelItem> {
   return patchJson(`/labels/${id}`, body);
 }
 
@@ -272,11 +278,12 @@ export async function retroactiveClassification(body: {
   date_from: string;
   date_to: string;
   use_ai?: boolean;
+  max_messages?: number;
 }): Promise<{
   total_processed: number;
   rule_matched: number;
   ai_classified: number;
-  skipped_unread: number;
+  max_messages: number;
 }> {
   return postJson("/cleanup/retroactive", body);
 }

@@ -25,6 +25,7 @@ class LabelUpdate(BaseModel):
     name: str | None = None
     bg_color: str | None = None
     text_color: str | None = None
+    ai_description: str | None = None
 
 
 class LabelOut(BaseModel):
@@ -34,6 +35,7 @@ class LabelOut(BaseModel):
     label_type: str
     color_bg: str | None
     color_text: str | None
+    ai_description: str | None
     message_count: int
     unread_count: int
     synced_at: datetime | None
@@ -136,8 +138,9 @@ def patch_label(
     if label.label_type == "system":
         raise HTTPException(status_code=400, detail="Cannot edit system labels")
 
-    gmail = GmailService(db)
-    gmail.update_label(user, label.gmail_label_id, name=body.name, bg_color=body.bg_color, text_color=body.text_color)
+    if body.name is not None or (body.bg_color and body.text_color):
+        gmail = GmailService(db)
+        gmail.update_label(user, label.gmail_label_id, name=body.name, bg_color=body.bg_color, text_color=body.text_color)
 
     if body.name is not None:
         label.name = body.name
@@ -145,6 +148,8 @@ def patch_label(
         label.color_bg = body.bg_color
     if body.text_color is not None:
         label.color_text = body.text_color
+    if body.ai_description is not None:
+        label.ai_description = body.ai_description
     db.commit()
     db.refresh(label)
     log.info("Updated label '%s' for user=%s", label.name, user.email)

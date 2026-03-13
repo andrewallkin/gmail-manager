@@ -20,6 +20,7 @@ class SettingsOut(BaseModel):
     profile_picture_url: str | None
     ai_enabled: bool
     ai_provider: str | None
+    auto_remove_inbox_labeled_read: bool
     polling_enabled: bool
     polling_interval_minutes: int
 
@@ -30,6 +31,7 @@ class SettingsUpdate(BaseModel):
     ai_enabled: bool | None = None
     ai_provider: str | None = None
     ai_api_key: str | None = None
+    auto_remove_inbox_labeled_read: bool | None = None
     polling_enabled: bool | None = None
     polling_interval_minutes: int | None = None
 
@@ -56,6 +58,7 @@ def _settings_out(user: User) -> SettingsOut:
         profile_picture_url=user.profile_picture_url,
         ai_enabled=user.ai_enabled,
         ai_provider=user.ai_provider,
+        auto_remove_inbox_labeled_read=user.auto_remove_inbox_labeled_read,
         polling_enabled=user.polling_enabled,
         polling_interval_minutes=user.polling_interval_minutes,
     )
@@ -80,6 +83,8 @@ def update_settings(
         user.ai_provider = body.ai_provider
     if body.ai_api_key is not None:
         user.ai_api_key = body.ai_api_key
+    if body.auto_remove_inbox_labeled_read is not None:
+        user.auto_remove_inbox_labeled_read = body.auto_remove_inbox_labeled_read
     if body.polling_enabled is not None:
         user.polling_enabled = body.polling_enabled
     if body.polling_interval_minutes is not None:
