@@ -13,6 +13,7 @@ export function CleanupPage() {
   const [previewCount, setPreviewCount] = useState<number | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [successResult, setSuccessResult] = useState<CleanupItem | null>(null);
 
   // Retroactive state
   const [retroFrom, setRetroFrom] = useState("");
@@ -36,8 +37,15 @@ export function CleanupPage() {
 
   useEffect(() => { load(); }, []);
 
+  const clearSuccessAndPreview = () => {
+    setSuccessResult(null);
+    setPreviewCount(null);
+    setShowConfirm(false);
+  };
+
   const handlePreview = async () => {
     setPreviewing(true);
+    setSuccessResult(null);
     try {
       const result = await previewCleanup({
         label_filter: labelFilter || undefined,
@@ -53,12 +61,13 @@ export function CleanupPage() {
     setSubmitting(true);
     setShowConfirm(false);
     try {
-      await startCleanup({
+      const result = await startCleanup({
         label_filter: labelFilter || undefined,
         date_from: dateFrom || undefined,
         date_to: dateTo || undefined,
         action,
       });
+      setSuccessResult(result);
       setLabelFilter("");
       setDateFrom("");
       setDateTo("");
@@ -94,7 +103,7 @@ export function CleanupPage() {
             <input
               type="text"
               value={labelFilter}
-              onChange={(e) => { setLabelFilter(e.target.value); setPreviewCount(null); setShowConfirm(false); }}
+              onChange={(e) => { setLabelFilter(e.target.value); clearSuccessAndPreview(); }}
               placeholder="e.g., Promotions, Social"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
@@ -116,7 +125,7 @@ export function CleanupPage() {
             <input
               type="date"
               value={dateFrom}
-              onChange={(e) => { setDateFrom(e.target.value); setPreviewCount(null); setShowConfirm(false); }}
+              onChange={(e) => { setDateFrom(e.target.value); clearSuccessAndPreview(); }}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -125,7 +134,7 @@ export function CleanupPage() {
             <input
               type="date"
               value={dateTo}
-              onChange={(e) => { setDateTo(e.target.value); setPreviewCount(null); setShowConfirm(false); }}
+              onChange={(e) => { setDateTo(e.target.value); clearSuccessAndPreview(); }}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -157,6 +166,28 @@ export function CleanupPage() {
               <span className="text-yellow-700"> between {dateFrom} and {dateTo}</span>
             )}
             <span className="text-yellow-700">? Click "Start Cleanup" to proceed.</span>
+          </div>
+        )}
+
+        {successResult && (
+          <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-800">
+            <div className="font-medium">
+              Successfully{" "}
+              {successResult.action === "delete"
+                ? "deleted"
+                : successResult.action === "archive"
+                  ? "archived"
+                  : "marked as read"}{" "}
+              {successResult.processed_messages} messages.
+            </div>
+            {(successResult.label_filter || successResult.date_from || successResult.date_to) && (
+              <div className="mt-1 text-green-700">
+                {successResult.label_filter && <span>Label: {successResult.label_filter}. </span>}
+                {(successResult.date_from || successResult.date_to) && (
+                  <span>Date range: {formatCleanupDateRange(successResult.date_from, successResult.date_to)}.</span>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
