@@ -9,7 +9,7 @@ export function CleanupPage() {
   const [labelFilter, setLabelFilter] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [action, setAction] = useState("archive");
+  const [action, setAction] = useState("delete");
   const [previewCount, setPreviewCount] = useState<number | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
