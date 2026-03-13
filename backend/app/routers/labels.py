@@ -36,7 +36,7 @@ class LabelOut(BaseModel):
     color_text: str | None
     message_count: int
     unread_count: int
-    synced_at: str | None
+    synced_at: datetime | None
 
     model_config = {"from_attributes": True}
 
