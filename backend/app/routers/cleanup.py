@@ -27,14 +27,14 @@ class CleanupCreate(BaseModel):
 class CleanupOut(BaseModel):
     id: int
     label_filter: str | None
-    date_from: str | None
-    date_to: str | None
+    date_from: datetime | None
+    date_to: datetime | None
     action: str
     status: str
     total_messages: int
     processed_messages: int
-    created_at: str
-    completed_at: str | None
+    created_at: datetime
+    completed_at: datetime | None
 
     model_config = {"from_attributes": True}
 
