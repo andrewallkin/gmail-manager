@@ -9,6 +9,9 @@ type Props = {
 export function SettingsPage({ status, onStatusChange }: Props) {
   const [pollingEnabled, setPollingEnabled] = useState(status.polling_enabled);
   const [pollingInterval, setPollingInterval] = useState(status.polling_interval_minutes);
+  const [autoRemoveInboxLabeledRead, setAutoRemoveInboxLabeledRead] = useState(
+    status.auto_remove_inbox_labeled_read
+  );
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -24,6 +27,12 @@ export function SettingsPage({ status, onStatusChange }: Props) {
       .finally(() => setRetentionLoading(false));
   }, []);
 
+  useEffect(() => {
+    setPollingEnabled(status.polling_enabled);
+    setPollingInterval(status.polling_interval_minutes);
+    setAutoRemoveInboxLabeledRead(status.auto_remove_inbox_labeled_read);
+  }, [status]);
+
   const handleSave = async () => {
     setSaving(true);
     setSaved(false);
@@ -31,6 +40,7 @@ export function SettingsPage({ status, onStatusChange }: Props) {
       const updated = await updateSettings({
         polling_enabled: pollingEnabled,
         polling_interval_minutes: pollingInterval,
+        auto_remove_inbox_labeled_read: autoRemoveInboxLabeledRead,
       });
       onStatusChange(updated);
       setSaved(true);
@@ -101,6 +111,16 @@ export function SettingsPage({ status, onStatusChange }: Props) {
             className="rounded border-gray-300"
           />
           Enable automatic polling
+        </label>
+
+        <label className="flex items-center gap-2 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            checked={autoRemoveInboxLabeledRead}
+            onChange={(e) => setAutoRemoveInboxLabeledRead(e.target.checked)}
+            className="rounded border-gray-300"
+          />
+          Auto-remove Inbox label after read classification to user labels (except "Unclassified") in Primary inbox
         </label>
 
         {pollingEnabled && (
