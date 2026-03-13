@@ -7,6 +7,7 @@ const emptyRule: RuleCreate = {
   match_from: null,
   match_subject: null,
   match_has_words: null,
+  action_label_id: null,
   action_archive: false,
   action_delete: false,
   action_mark_read: false,
@@ -233,6 +234,24 @@ export function RulesPage() {
             Mark as Read
           </label>
         </div>
+        <div className="mt-3">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Apply label</label>
+          <select
+            value={form.action_label_id ?? ""}
+            onChange={(e) => updateField("action_label_id", e.target.value ? Number(e.target.value) : null)}
+            className="w-full sm:w-48 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">None</option>
+            {labels
+              .filter((l) => l.label_type === "user")
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+          </select>
+        </div>
       </div>
 
       <div className="flex gap-2 pt-2">
@@ -293,6 +312,11 @@ export function RulesPage() {
                     {getScopeBadges(rule).map(s => (
                       <span key={s} className="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">{s}</span>
                     ))}
+                    {rule.action_label_id && (
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                        Label: {labelName(rule.action_label_id) ?? `#${rule.action_label_id}`}
+                      </span>
+                    )}
                     {rule.action_archive && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">Archive</span>}
                     {rule.action_delete && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">Delete</span>}
                     {rule.action_mark_read && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">Mark Read</span>}
