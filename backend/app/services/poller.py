@@ -2,6 +2,7 @@ import logging
 import threading
 from datetime import datetime, timedelta, timezone
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -188,6 +189,11 @@ def _poll_user(user: User, db: Session) -> None:
                             gmail.modify_message(user, msg_id, add_labels=[label_id])
                             log.info("AI classified msg=%s with label=%s", msg_id, label_id)
 
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404:
+                    log.debug("Message %s no longer exists, skipping", msg_id)
+                else:
+                    log.error("Failed to process msg=%s: %s", msg_id, exc)
             except Exception as exc:
                 log.error("Failed to process msg=%s: %s", msg_id, exc)
 
