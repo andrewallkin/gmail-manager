@@ -151,7 +151,7 @@ export function CleanupPage() {
         {showConfirm && previewCount !== null && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm">
             <span className="font-medium text-yellow-800">
-              {action === "delete" ? "Delete" : action === "archive" ? "Archive" : "Mark as read"} ~{previewCount} messages
+              {action === "delete" ? "Delete" : action === "archive" ? "Archive" : "Mark as read"} {previewCount} messages
             </span>
             {dateFrom && dateTo && (
               <span className="text-yellow-700"> between {dateFrom} and {dateTo}</span>

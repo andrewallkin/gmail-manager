@@ -71,9 +71,16 @@ def preview_cleanup(
 ) -> dict:
     gmail = GmailService(db)
     query = _build_cleanup_query(body.label_filter, body.date_from, body.date_to)
-    result = gmail.list_messages(user, query=query, max_results=1)
-    estimated_count = result.get("resultSizeEstimate", 0)
-    return {"estimated_count": estimated_count}
+    total = 0
+    page_token = None
+    while True:
+        result = gmail.list_messages(user, query=query, max_results=100, page_token=page_token)
+        messages = result.get("messages", [])
+        total += len(messages)
+        page_token = result.get("nextPageToken")
+        if not page_token or not messages:
+            break
+    return {"estimated_count": total}
 
 
 @router.post("/retroactive")
