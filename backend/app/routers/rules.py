@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.deps import require_jwt_user
 from app.models import Rule, User
-from app.services.gmail_service import GmailService
+from app.services.gmail_service import GmailService, parse_message_details
 from app.services.rule_engine import build_rule_query, apply_rule_actions
 
 router = APIRouter(prefix="/api/rules", tags=["rules"])
@@ -37,6 +37,7 @@ class RuleCreate(BaseModel):
     scope_all_inbox: bool = False
     use_ai: bool = False
     ai_prompt: str | None = None
+    priority: int = 0
 
 
 class RuleUpdate(RuleCreate):
@@ -65,10 +66,23 @@ class RuleOut(BaseModel):
     scope_all_inbox: bool
     use_ai: bool
     ai_prompt: str | None
+    priority: int
+    total_matched: int
+    last_matched_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ReorderRequest(BaseModel):
+    rule_ids: list[int]
+
+
+class PreviewOut(BaseModel):
+    estimated_count: int
+    query: str
+    sample_subjects: list[str]
 
 
 @router.get("")
@@ -76,7 +90,11 @@ def list_rules(
     db: Session = Depends(get_db),
     user: User = Depends(require_jwt_user),
 ) -> list[RuleOut]:
-    rules = db.scalars(select(Rule).where(Rule.user_id == user.id).order_by(Rule.created_at.desc())).all()
+    rules = db.scalars(
+        select(Rule)
+        .where(Rule.user_id == user.id)
+        .order_by(Rule.priority.asc(), Rule.created_at.asc())
+    ).all()
     return [RuleOut.model_validate(r) for r in rules]
 
 
@@ -92,6 +110,55 @@ def create_rule(
     db.refresh(rule)
     log.info("Created rule '%s' for user=%s", body.name, user.email)
     return RuleOut.model_validate(rule)
+
+
+@router.put("/reorder")
+def reorder_rules(
+    body: ReorderRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_jwt_user),
+) -> dict:
+    rules = db.scalars(select(Rule).where(Rule.user_id == user.id)).all()
+    rule_map = {r.id: r for r in rules}
+    for idx, rule_id in enumerate(body.rule_ids):
+        if rule_id in rule_map:
+            rule_map[rule_id].priority = idx
+    db.commit()
+    return {"reordered": True}
+
+
+@router.post("/preview")
+def preview_rule(
+    body: RuleCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_jwt_user),
+) -> PreviewOut:
+    # Create a temporary Rule-like object for build_rule_query
+    temp_rule = Rule(user_id=user.id, **body.model_dump())
+    query = build_rule_query(temp_rule, db)
+    if not query:
+        return PreviewOut(estimated_count=0, query="", sample_subjects=[])
+
+    gmail = GmailService(db)
+    result = gmail.list_messages(user, query=query, max_results=50)
+    messages = result.get("messages", [])
+    estimated_count = len(messages)
+
+    # Fetch subjects of first 5 matches
+    sample_subjects: list[str] = []
+    for msg in messages[:5]:
+        try:
+            raw = gmail.get_message(user, msg["id"])
+            details = parse_message_details(raw)
+            sample_subjects.append(details.get("subject", "(no subject)"))
+        except Exception:
+            pass
+
+    return PreviewOut(
+        estimated_count=estimated_count,
+        query=query,
+        sample_subjects=sample_subjects,
+    )
 
 
 @router.put("/{rule_id}")

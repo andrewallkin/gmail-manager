@@ -134,9 +134,11 @@ def _poll_user(user: User, db: Session) -> None:
     if new_msg_ids:
         log.info("Processing %d new messages for user=%s", len(new_msg_ids), user.email)
 
-        # Load enabled rules
+        # Load enabled rules ordered by priority
         rules = db.scalars(
-            select(Rule).where(Rule.user_id == user.id, Rule.enabled == True)  # noqa: E712
+            select(Rule)
+            .where(Rule.user_id == user.id, Rule.enabled == True)  # noqa: E712
+            .order_by(Rule.priority.asc(), Rule.created_at.asc())
         ).all()
 
         # Load user labels for AI

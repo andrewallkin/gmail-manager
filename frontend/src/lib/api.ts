@@ -60,6 +60,9 @@ export type RuleItem = {
   scope_all_inbox: boolean;
   use_ai: boolean;
   ai_prompt: string | null;
+  priority: number;
+  total_matched: number;
+  last_matched_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -85,6 +88,7 @@ export type RuleCreate = {
   scope_all_inbox?: boolean;
   use_ai?: boolean;
   ai_prompt?: string | null;
+  priority?: number;
 };
 
 export type CleanupItem = {
@@ -251,6 +255,20 @@ export async function deleteRule(id: number): Promise<void> {
 
 export async function runRule(id: number): Promise<{ matched: number; processed: number; query: string }> {
   return postJson(`/rules/${id}/run`);
+}
+
+export async function reorderRules(ruleIds: number[]): Promise<{ reordered: boolean }> {
+  return putJson("/rules/reorder", { rule_ids: ruleIds });
+}
+
+export type PreviewResult = {
+  estimated_count: number;
+  query: string;
+  sample_subjects: string[];
+};
+
+export async function previewRule(rule: RuleCreate): Promise<PreviewResult> {
+  return postJson("/rules/preview", rule);
 }
 
 // --- Cleanup ---

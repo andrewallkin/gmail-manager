@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -97,6 +98,11 @@ def apply_rule_actions(
             add_labels=add_labels or None,
             remove_labels=remove_labels or None,
         )
+
+    # Update rule stats
+    rule.total_matched += len(msg_ids)
+    rule.last_matched_at = datetime.utcnow()
+    db.commit()
 
     return len(msg_ids)
 

@@ -71,6 +71,9 @@ class Rule(Base):
     scope_all_inbox: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     use_ai: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ai_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_matched: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_matched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
