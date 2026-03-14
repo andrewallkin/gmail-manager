@@ -11,6 +11,7 @@ const tabs = [
   { to: "/labels", label: "Labels" },
   { to: "/rules", label: "Rules" },
   { to: "/cleanup", label: "Cleanup" },
+  { to: "/restore", label: "Restore" },
   { to: "/ai", label: "AI" },
   { to: "/settings", label: "Settings" },
 ];

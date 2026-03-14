@@ -7,6 +7,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { AIPage } from "./pages/AIPage";
 import { LabelsPage } from "./pages/LabelsPage";
 import { Login } from "./pages/Login";
+import { RestorePage } from "./pages/RestorePage";
 import { RulesPage } from "./pages/RulesPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
@@ -53,6 +54,7 @@ export default function App() {
           <Route path="labels" element={<LabelsPage />} />
           <Route path="rules" element={<RulesPage />} />
           <Route path="cleanup" element={<CleanupPage />} />
+          <Route path="restore" element={<RestorePage />} />
           <Route
             path="ai"
             element={<AIPage status={status} onStatusChange={setStatus} />}

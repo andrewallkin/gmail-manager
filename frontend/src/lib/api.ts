@@ -123,6 +123,16 @@ export type RetentionData = {
   items: RetentionItem[];
 };
 
+export type RestoreManifestItem = {
+  name: string;
+  created_at: string | null;
+  query: string | null;
+  messages_seen: number;
+  messages_restored: number;
+  errors: number;
+  rolled_back: boolean;
+};
+
 // --- Helpers ---
 
 async function getJson<T>(path: string, redirectOn401 = true): Promise<T> {
@@ -308,6 +318,44 @@ export async function retroactiveClassification(body: {
   max_messages: number;
 }> {
   return postJson("/cleanup/retroactive", body);
+}
+
+// --- Restore (temporary) ---
+
+export async function previewRestore(body: {
+  query?: string;
+}): Promise<{ query: string; estimated_count: number; pages_scanned: number }> {
+  return postJson("/restore/preview", body);
+}
+
+export async function runRestore(body: {
+  query?: string;
+  batch_size?: number;
+}): Promise<{
+  manifest_name: string;
+  query: string;
+  pages_scanned: number;
+  messages_seen: number;
+  messages_restored: number;
+  errors: number;
+}> {
+  return postJson("/restore/run", body);
+}
+
+export async function rollbackRestore(body: {
+  manifest_name: string;
+  batch_size?: number;
+}): Promise<{
+  manifest_name: string;
+  target_count: number;
+  rolled_back_count: number;
+  errors: number;
+}> {
+  return postJson("/restore/rollback", body);
+}
+
+export async function fetchRestoreManifests(): Promise<{ items: RestoreManifestItem[] }> {
+  return getJson("/restore/manifests");
 }
 
 // --- Settings ---
