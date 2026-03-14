@@ -5,8 +5,6 @@ from sqlalchemy.orm import Session
 
 from app.models import Label, Rule, User
 from app.services.gmail_service import GmailService
-from app.services.gmail_service import parse_message_details
-from app.services.inbox_rules import should_auto_remove_inbox
 
 log = logging.getLogger("rules")
 
@@ -90,31 +88,6 @@ def apply_rule_actions(
     if rule.action_delete:
         gmail.batch_trash_messages(user, msg_ids)
     elif add_labels or remove_labels:
-        should_apply_conditional_inbox_rule = bool(
-            action_label
-            and user.auto_remove_inbox_labeled_read
-            and action_label.name.strip().lower() != "unclassified"
-        )
-        if should_apply_conditional_inbox_rule:
-            for msg_id in msg_ids:
-                details = (message_details_by_id or {}).get(msg_id)
-                if details is None:
-                    details = parse_message_details(gmail.get_message(user, msg_id))
-                remove_for_msg = list(remove_labels)
-                if should_auto_remove_inbox(
-                    user=user,
-                    label_name=action_label.name if action_label else None,
-                    label_ids=details.get("label_ids", []),
-                    is_unread=details.get("is_unread", False),
-                ) and "INBOX" not in remove_for_msg:
-                    remove_for_msg.append("INBOX")
-                gmail.modify_message(
-                    user,
-                    msg_id,
-                    add_labels=add_labels or None,
-                    remove_labels=remove_for_msg or None,
-                )
-            return len(msg_ids)
         gmail.batch_modify_messages(
             user, msg_ids,
             add_labels=add_labels or None,

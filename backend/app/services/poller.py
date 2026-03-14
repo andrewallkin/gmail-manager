@@ -10,7 +10,7 @@ from app.db import SessionLocal
 from app.models import Label, Rule, SystemLabelRetention, User
 from app.services.ai_service import AIService
 from app.services.gmail_service import GmailService, parse_message_details
-from app.services.inbox_rules import is_primary_inbox_message, should_auto_remove_inbox
+from app.services.inbox_rules import is_primary_inbox_message
 from app.services.rule_engine import apply_rule_actions, message_matches_rule
 
 log = logging.getLogger("poller")
@@ -187,15 +187,7 @@ def _poll_user(user: User, db: Session) -> None:
                             available_labels,
                         )
                         if label_id:
-                            remove_labels = None
-                            if should_auto_remove_inbox(
-                                user=user,
-                                label_name=label_name_by_id.get(label_id),
-                                label_ids=label_ids,
-                                is_unread=is_unread,
-                            ):
-                                remove_labels = ["INBOX"]
-                            gmail.modify_message(user, msg_id, add_labels=[label_id], remove_labels=remove_labels)
+                            gmail.modify_message(user, msg_id, add_labels=[label_id])
                             log.info("AI classified msg=%s with label=%s", msg_id, label_id)
 
             except httpx.HTTPStatusError as exc:
@@ -206,6 +198,10 @@ def _poll_user(user: User, db: Session) -> None:
             except Exception as exc:
                 log.error("Failed to process msg=%s: %s", msg_id, exc)
 
+    # Run inbox removal sweep for read, classified emails
+    if user.auto_remove_inbox_labeled_read:
+        _run_inbox_removal_sweep(user, gmail, db)
+
     # Run retention cleanup
     _run_retention_cleanup(user, gmail, db)
 
@@ -213,6 +209,46 @@ def _poll_user(user: User, db: Session) -> None:
     if new_history_id:
         user.last_history_id = str(new_history_id)
         db.commit()
+
+
+def _run_inbox_removal_sweep(user: User, gmail: GmailService, db: Session) -> None:
+    """Remove INBOX label from read emails that have a user label (including Unclassified)."""
+    user_labels = db.scalars(
+        select(Label).where(Label.user_id == user.id, Label.label_type == "user")
+    ).all()
+    if not user_labels:
+        return
+
+    label_clauses = " OR ".join(
+        f"label:{l.name.replace(' ', '-')}" for l in user_labels
+    )
+    query = (
+        f"is:read in:inbox "
+        f"-category:promotions -category:social -category:updates -category:forums "
+        f"{{{label_clauses}}}"
+    )
+
+    try:
+        page_token = None
+        total_removed = 0
+        while True:
+            result = gmail.list_messages(user, query=query, max_results=100, page_token=page_token)
+            messages = result.get("messages", [])
+            if not messages:
+                break
+            msg_ids = [m["id"] for m in messages]
+            gmail.batch_modify_messages(user, msg_ids, remove_labels=["INBOX"])
+            total_removed += len(msg_ids)
+            page_token = result.get("nextPageToken")
+            if not page_token:
+                break
+        if total_removed:
+            log.info(
+                "Inbox removal sweep: removed INBOX from %d read messages for user=%s",
+                total_removed, user.email,
+            )
+    except Exception as exc:
+        log.error("Inbox removal sweep failed for user=%s: %s", user.email, exc)
 
 
 def _run_retention_cleanup(user: User, gmail: GmailService, db: Session) -> None:

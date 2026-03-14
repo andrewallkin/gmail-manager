@@ -120,7 +120,7 @@ export function SettingsPage({ status, onStatusChange }: Props) {
             onChange={(e) => setAutoRemoveInboxLabeledRead(e.target.checked)}
             className="rounded border-gray-300"
           />
-          Auto-remove Inbox label after read classification to user labels (except "Unclassified") in Primary inbox
+          Auto-remove Inbox label when classified emails are read in Primary inbox
         </label>
 
         {pollingEnabled && (

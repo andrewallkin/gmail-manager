@@ -11,7 +11,6 @@ from app.deps import require_jwt_user
 from app.models import CleanupJob, Label, Rule, User
 from app.services.ai_service import AIService
 from app.services.gmail_service import GmailService, parse_message_details
-from app.services.inbox_rules import should_auto_remove_inbox
 from app.services.rule_engine import apply_rule_actions, message_matches_rule
 
 router = APIRouter(prefix="/api/cleanup", tags=["cleanup"])
@@ -168,19 +167,10 @@ def retroactive_classification(
                         available_labels,
                     )
                     if label_id:
-                        remove_labels = None
-                        if should_auto_remove_inbox(
-                            user=user,
-                            label_name=label_name_by_id.get(label_id),
-                            label_ids=details["label_ids"],
-                            is_unread=details["is_unread"],
-                        ):
-                            remove_labels = ["INBOX"]
                         gmail.modify_message(
                             user,
                             msg_ref["id"],
                             add_labels=[label_id],
-                            remove_labels=remove_labels,
                         )
                         ai_classified_count += 1
 
