@@ -68,6 +68,7 @@ class Rule(Base):
     scope_social: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     scope_updates: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     scope_forums: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    scope_all_inbox: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     use_ai: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ai_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

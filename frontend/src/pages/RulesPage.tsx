@@ -15,9 +15,11 @@ const emptyRule: RuleCreate = {
   scope_social: false,
   scope_updates: false,
   scope_forums: false,
+  scope_all_inbox: false,
 };
 
 const SCOPE_OPTIONS = [
+  { key: "scope_all_inbox" as const, label: "All inbox" },
   { key: "scope_promotions" as const, label: "Promotions" },
   { key: "scope_social" as const, label: "Social" },
   { key: "scope_updates" as const, label: "Updates" },
@@ -75,6 +77,7 @@ export function RulesPage() {
       scope_social: rule.scope_social,
       scope_updates: rule.scope_updates,
       scope_forums: rule.scope_forums,
+      scope_all_inbox: rule.scope_all_inbox ?? false,
       use_ai: rule.use_ai,
       ai_prompt: rule.ai_prompt,
     });
@@ -109,7 +112,8 @@ export function RulesPage() {
     setRunResult(null);
     try {
       const result = await runRule(rule.id);
-      setRunResult(`Matched ${result.matched}, processed ${result.processed} messages`);
+      const msg = `Matched ${result.matched}, processed ${result.processed} messages`;
+      setRunResult(result.query ? `${msg}\nQuery: ${result.query}` : msg);
     } catch {
       setRunResult("Failed to run rule");
     } finally { setRunningId(null); }
@@ -120,6 +124,7 @@ export function RulesPage() {
   };
 
   const getScopeBadges = (rule: RuleItem) => {
+    if (rule.scope_all_inbox ?? false) return ["All inbox"];
     const scopes: string[] = [];
     if (rule.scope_promotions) scopes.push("Promotions");
     if (rule.scope_social) scopes.push("Social");
@@ -188,6 +193,9 @@ export function RulesPage() {
       <div className="border-t border-gray-200 pt-4">
         <label className="block text-sm font-medium text-gray-700 mb-2">Scope</label>
         <p className="text-xs text-gray-400 mb-2">Select categories to target. No categories = Primary inbox only.</p>
+        {(form.match_from ?? "").toLowerCase().includes("receipt") && !form.scope_all_inbox && !form.scope_updates && (
+          <p className="text-xs text-amber-600 mb-2">Tip: Receipt emails often land in Updates. Consider checking Updates or All inbox.</p>
+        )}
         <div className="flex flex-wrap gap-4">
           {SCOPE_OPTIONS.map(({ key, label }) => (
             <label key={key} className="flex items-center gap-2 text-sm text-gray-700">
@@ -285,9 +293,16 @@ export function RulesPage() {
       </div>
 
       {runResult && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-sm text-blue-700 flex justify-between items-center">
-          {runResult}
-          <button onClick={() => setRunResult(null)} className="text-blue-500 hover:text-blue-700 ml-4">&times;</button>
+        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-sm text-blue-700 flex justify-between items-start gap-4">
+          <div className="min-w-0 flex-1">
+            <div>{runResult.split("\n")[0]}</div>
+            {runResult.includes("\n") && (
+              <div className="mt-1 text-xs text-blue-600 font-mono truncate" title={runResult.split("\n").slice(1).join(" ")}>
+                {runResult.split("\n").slice(1).join(" ")}
+              </div>
+            )}
+          </div>
+          <button onClick={() => setRunResult(null)} className="text-blue-500 hover:text-blue-700 flex-shrink-0">&times;</button>
         </div>
       )}
 

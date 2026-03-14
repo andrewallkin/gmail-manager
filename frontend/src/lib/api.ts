@@ -57,6 +57,7 @@ export type RuleItem = {
   scope_social: boolean;
   scope_updates: boolean;
   scope_forums: boolean;
+  scope_all_inbox: boolean;
   use_ai: boolean;
   ai_prompt: string | null;
   created_at: string;
@@ -81,6 +82,7 @@ export type RuleCreate = {
   scope_social?: boolean;
   scope_updates?: boolean;
   scope_forums?: boolean;
+  scope_all_inbox?: boolean;
   use_ai?: boolean;
   ai_prompt?: string | null;
 };
@@ -247,7 +249,7 @@ export async function deleteRule(id: number): Promise<void> {
   await deleteReq(`/rules/${id}`);
 }
 
-export async function runRule(id: number): Promise<{ matched: number; processed: number }> {
+export async function runRule(id: number): Promise<{ matched: number; processed: number; query: string }> {
   return postJson(`/rules/${id}/run`);
 }
 

@@ -36,23 +36,27 @@ def build_rule_query(rule: Rule, db: Session) -> str:
             query_parts.append(f"label:{label.name.replace(' ', '-')}")
 
     # Scope filtering
-    scopes = []
-    if rule.scope_promotions:
-        scopes.append("category:promotions")
-    if rule.scope_social:
-        scopes.append("category:social")
-    if rule.scope_updates:
-        scopes.append("category:updates")
-    if rule.scope_forums:
-        scopes.append("category:forums")
-
-    if scopes:
-        # Match any of the selected categories
-        scope_query = " OR ".join(scopes)
-        query_parts.append(f"({scope_query})")
+    if rule.scope_all_inbox:
+        # All inbox categories: no category exclusions
+        query_parts.append("in:inbox")
     else:
-        # No scope = Primary inbox only
-        query_parts.append("in:inbox -category:promotions -category:social -category:updates -category:forums")
+        scopes = []
+        if rule.scope_promotions:
+            scopes.append("category:promotions")
+        if rule.scope_social:
+            scopes.append("category:social")
+        if rule.scope_updates:
+            scopes.append("category:updates")
+        if rule.scope_forums:
+            scopes.append("category:forums")
+
+        if scopes:
+            # Match any of the selected categories
+            scope_query = " OR ".join(scopes)
+            query_parts.append(f"({scope_query})")
+        else:
+            # No scope = Primary inbox only
+            query_parts.append("in:inbox -category:promotions -category:social -category:updates -category:forums")
 
     return " ".join(query_parts)
 
@@ -122,23 +126,28 @@ def message_matches_rule(rule: Rule, details: dict, db: Session) -> bool:
             return False
 
     # Scope check
-    scopes = []
-    if rule.scope_promotions:
-        scopes.append("CATEGORY_PROMOTIONS")
-    if rule.scope_social:
-        scopes.append("CATEGORY_SOCIAL")
-    if rule.scope_updates:
-        scopes.append("CATEGORY_UPDATES")
-    if rule.scope_forums:
-        scopes.append("CATEGORY_FORUMS")
-
-    if scopes:
-        if not any(s in label_ids for s in scopes):
+    if rule.scope_all_inbox:
+        # All inbox: accept any message in inbox (no category filter)
+        if "INBOX" not in label_ids:
             return False
     else:
-        # Primary only: reject if message has any category label
-        category_ids = set(CATEGORY_LABELS.values())
-        if any(lid in category_ids for lid in label_ids):
-            return False
+        scopes = []
+        if rule.scope_promotions:
+            scopes.append("CATEGORY_PROMOTIONS")
+        if rule.scope_social:
+            scopes.append("CATEGORY_SOCIAL")
+        if rule.scope_updates:
+            scopes.append("CATEGORY_UPDATES")
+        if rule.scope_forums:
+            scopes.append("CATEGORY_FORUMS")
+
+        if scopes:
+            if not any(s in label_ids for s in scopes):
+                return False
+        else:
+            # Primary only: reject if message has any category label
+            category_ids = set(CATEGORY_LABELS.values())
+            if any(lid in category_ids for lid in label_ids):
+                return False
 
     return True

@@ -34,6 +34,7 @@ class RuleCreate(BaseModel):
     scope_social: bool = False
     scope_updates: bool = False
     scope_forums: bool = False
+    scope_all_inbox: bool = False
     use_ai: bool = False
     ai_prompt: str | None = None
 
@@ -61,6 +62,7 @@ class RuleOut(BaseModel):
     scope_social: bool
     scope_updates: bool
     scope_forums: bool
+    scope_all_inbox: bool
     use_ai: bool
     ai_prompt: str | None
     created_at: datetime
@@ -144,10 +146,10 @@ def run_rule(
     messages = result.get("messages", [])
 
     if not messages:
-        return {"matched": 0, "processed": 0}
+        return {"matched": 0, "processed": 0, "query": query}
 
     msg_ids = [m["id"] for m in messages]
     processed = apply_rule_actions(rule, msg_ids, gmail, user, db)
 
     log.info("Ran rule '%s': matched=%d processed=%d", rule.name, len(messages), processed)
-    return {"matched": len(messages), "processed": processed}
+    return {"matched": len(messages), "processed": processed, "query": query}
