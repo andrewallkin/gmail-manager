@@ -17,7 +17,12 @@ CATEGORY_LABELS = {
 }
 
 
-def build_rule_query(rule: Rule, db: Session) -> str:
+def _to_gmail_label_term(label_name: str) -> str:
+    """Normalize label names for Gmail query terms."""
+    return label_name.replace(" ", "-")
+
+
+def build_rule_query(rule: Rule, db: Session, exclude_action_label: bool = False) -> str:
     """Build Gmail search query from rule criteria + scope."""
     query_parts: list[str] = []
 
@@ -34,7 +39,12 @@ def build_rule_query(rule: Rule, db: Session) -> str:
     if rule.match_label_id:
         label = db.scalar(select(Label).where(Label.id == rule.match_label_id).limit(1))
         if label:
-            query_parts.append(f"label:{label.name.replace(' ', '-')}")
+            query_parts.append(f"label:{_to_gmail_label_term(label.name)}")
+
+    if exclude_action_label and rule.action_label_id:
+        action_label = db.scalar(select(Label).where(Label.id == rule.action_label_id).limit(1))
+        if action_label:
+            query_parts.append(f"-label:{_to_gmail_label_term(action_label.name)}")
 
     # Scope filtering
     if rule.scope_all_inbox:

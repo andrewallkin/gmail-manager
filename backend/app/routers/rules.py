@@ -135,7 +135,7 @@ def preview_rule(
 ) -> PreviewOut:
     # Create a temporary Rule-like object for build_rule_query
     temp_rule = Rule(user_id=user.id, **body.model_dump())
-    query = build_rule_query(temp_rule, db)
+    query = build_rule_query(temp_rule, db, exclude_action_label=True)
     if not query:
         return PreviewOut(estimated_count=0, query="", sample_subjects=[])
 
@@ -211,7 +211,7 @@ def run_rule(
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
 
-    query = build_rule_query(rule, db)
+    query = build_rule_query(rule, db, exclude_action_label=True)
     if not query:
         raise HTTPException(status_code=400, detail="Rule has no match criteria")
 

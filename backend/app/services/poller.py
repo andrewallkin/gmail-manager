@@ -266,6 +266,12 @@ def _run_inbox_removal_sweep(user: User, gmail: GmailService, db: Session) -> No
 
 
 def _run_retention_cleanup(user: User, gmail: GmailService, db: Session) -> None:
+    user_label_ids = {
+        label.gmail_label_id
+        for label in db.scalars(
+            select(Label).where(Label.user_id == user.id, Label.label_type == "user")
+        ).all()
+    }
     retentions = db.scalars(
         select(SystemLabelRetention).where(
             SystemLabelRetention.user_id == user.id,
@@ -292,8 +298,26 @@ def _run_retention_cleanup(user: User, gmail: GmailService, db: Session) -> None
                 if not messages:
                     break
                 msg_ids = [m["id"] for m in messages]
-                gmail.batch_trash_messages(user, msg_ids)
-                total_trashed += len(msg_ids)
+                trashable_msg_ids = msg_ids
+                if user_label_ids:
+                    trashable_msg_ids = []
+                    for msg_id in msg_ids:
+                        try:
+                            message = gmail.get_message(user, msg_id, fmt="metadata")
+                        except Exception as exc:
+                            log.warning(
+                                "Retention cleanup: skipping msg=%s after metadata fetch failure: %s",
+                                msg_id, exc,
+                            )
+                            continue
+
+                        message_label_ids = set(message.get("labelIds", []))
+                        if message_label_ids.isdisjoint(user_label_ids):
+                            trashable_msg_ids.append(msg_id)
+
+                if trashable_msg_ids:
+                    gmail.batch_trash_messages(user, trashable_msg_ids)
+                    total_trashed += len(trashable_msg_ids)
                 page_token = result.get("nextPageToken")
                 if not page_token:
                     break

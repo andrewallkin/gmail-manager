@@ -6,7 +6,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import Base
-from app.models import Rule, SystemLabelRetention, User
+from app.models import Label, Rule, SystemLabelRetention, User
 from app.routers.auth import disconnect_google
 from app.routers import rules as rules_router
 from app.services.google_service import GoogleService
@@ -297,6 +297,81 @@ def test_run_rule_paginates_all_message_pages(monkeypatch) -> None:
     assert rule.total_matched == 3
 
 
+def test_run_rule_excludes_action_label_from_query(monkeypatch) -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    label = Label(
+        user_id=user.id,
+        gmail_label_id="Label_42",
+        name="Daily Maverick",
+        label_type="user",
+    )
+    db.add(label)
+    db.commit()
+    db.refresh(label)
+
+    rule = Rule(
+        user_id=user.id,
+        name="Label historical newsletters",
+        match_from="news@dailymaverick.co.za",
+        action_label_id=label.id,
+    )
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+
+    seen_queries: list[str] = []
+    modified_add_labels: list[list[str] | None] = []
+
+    class _FakeGmailService:
+        def __init__(self, _db: Session) -> None:
+            pass
+
+        def list_messages(
+            self,
+            _user: User,
+            query: str = "",
+            max_results: int = 100,
+            page_token: str | None = None,
+        ) -> dict:
+            assert max_results == 100
+            assert page_token is None
+            seen_queries.append(query)
+            return {"messages": [{"id": "m-1"}]}
+
+        def batch_modify_messages(
+            self,
+            _user: User,
+            msg_ids: list[str],
+            add_labels: list[str] | None = None,
+            remove_labels: list[str] | None = None,
+        ) -> None:
+            assert msg_ids == ["m-1"]
+            assert remove_labels is None
+            modified_add_labels.append(add_labels)
+
+    monkeypatch.setattr(rules_router, "GmailService", _FakeGmailService)
+    result = rules_router.run_rule(rule.id, db=db, user=user)
+
+    assert len(seen_queries) == 1
+    assert "from:news@dailymaverick.co.za" in seen_queries[0]
+    assert "-label:Daily-Maverick" in seen_queries[0]
+    assert modified_add_labels == [["Label_42"]]
+    assert result["matched"] == 1
+    assert result["processed"] == 1
+
+
 def test_retention_cleanup_paginates_all_pages() -> None:
     db = _make_db()
     user = User(
@@ -352,6 +427,72 @@ def test_retention_cleanup_paginates_all_pages() -> None:
 
     assert gmail.list_calls == [None, "page-2"]
     assert gmail.trashed_batches == [["m-1", "m-2"], ["m-3"]]
+
+
+def test_retention_cleanup_skips_messages_with_user_labels() -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    user_label = Label(
+        user_id=user.id,
+        gmail_label_id="Label_99",
+        name="Newsletters",
+        label_type="user",
+    )
+    retention = SystemLabelRetention(
+        user_id=user.id,
+        category="promotions",
+        retention_days=30,
+        enabled=True,
+    )
+    db.add_all([user_label, retention])
+    db.commit()
+
+    class _FakeGmailService:
+        def __init__(self) -> None:
+            self.trashed_batches: list[list[str]] = []
+            self.metadata_calls: list[str] = []
+
+        def list_messages(
+            self,
+            _user: User,
+            query: str = "",
+            max_results: int = 100,
+            page_token: str | None = None,
+        ) -> dict:
+            assert "label:promotions" in query
+            assert max_results == 100
+            assert page_token is None
+            return {"messages": [{"id": "m-1"}, {"id": "m-2"}, {"id": "m-3"}]}
+
+        def get_message(self, _user: User, msg_id: str, fmt: str = "full") -> dict:
+            assert fmt == "metadata"
+            self.metadata_calls.append(msg_id)
+            label_ids = {
+                "m-1": ["CATEGORY_PROMOTIONS", "Label_99"],
+                "m-2": ["CATEGORY_PROMOTIONS"],
+                "m-3": ["CATEGORY_PROMOTIONS", "STARRED"],
+            }
+            return {"labelIds": label_ids[msg_id]}
+
+        def batch_trash_messages(self, _user: User, msg_ids: list[str]) -> None:
+            self.trashed_batches.append(msg_ids)
+
+    gmail = _FakeGmailService()
+    poller._run_retention_cleanup(user, gmail, db)
+
+    assert gmail.metadata_calls == ["m-1", "m-2", "m-3"]
+    assert gmail.trashed_batches == [["m-2", "m-3"]]
 
 
 def test_preview_rule_counts_all_pages(monkeypatch) -> None:
