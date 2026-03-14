@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   LabelItem,
   Status,
@@ -14,7 +15,6 @@ type Props = {
 };
 
 export function AIPage({ status, onStatusChange }: Props) {
-  const [aiEnabled, setAiEnabled] = useState(status.ai_enabled);
   const [aiProvider, setAiProvider] = useState(status.ai_provider ?? "");
   const [aiApiKey, setAiApiKey] = useState("");
   const [autoRemoveInbox, setAutoRemoveInbox] = useState(status.auto_remove_inbox_labeled_read);
@@ -40,12 +40,11 @@ export function AIPage({ status, onStatusChange }: Props) {
   } | null>(null);
 
   useEffect(() => {
-    setAiEnabled(status.ai_enabled);
     setAiProvider(status.ai_provider ?? "");
     setAutoRemoveInbox(status.auto_remove_inbox_labeled_read);
   }, [status]);
 
-  const loadLabels = async () => {
+  const loadLabels = useCallback(async () => {
     setLoadingLabels(true);
     try {
       const allLabels = await fetchLabels();
@@ -61,11 +60,17 @@ export function AIPage({ status, onStatusChange }: Props) {
     } finally {
       setLoadingLabels(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
+    if (!status.ai_enabled) {
+      setLabels([]);
+      setDescriptions({});
+      setLoadingLabels(false);
+      return;
+    }
     loadLabels();
-  }, []);
+  }, [loadLabels, status.ai_enabled]);
 
   const dirtyDescriptionIds = useMemo(
     () =>
@@ -80,7 +85,6 @@ export function AIPage({ status, onStatusChange }: Props) {
     setSettingsSaved(false);
     try {
       const updated = await updateSettings({
-        ai_enabled: aiEnabled,
         ai_provider: aiProvider || null,
         ai_api_key: aiApiKey || null,
         auto_remove_inbox_labeled_read: autoRemoveInbox,
@@ -137,6 +141,27 @@ export function AIPage({ status, onStatusChange }: Props) {
     }
   };
 
+  if (!status.ai_enabled) {
+    return (
+      <div className="space-y-8">
+        <h1 className="text-2xl font-bold text-gray-900">AI</h1>
+        <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-3">
+          <h2 className="text-lg font-semibold text-gray-900">AI is currently disabled</h2>
+          <p className="text-sm text-gray-600">
+            Enable AI features in Settings before using AI provider configuration, label context, and
+            historical AI classification.
+          </p>
+          <Link
+            to="/settings"
+            className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors"
+          >
+            Go to Settings
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8">
       <h1 className="text-2xl font-bold text-gray-900">AI</h1>
@@ -150,16 +175,6 @@ export function AIPage({ status, onStatusChange }: Props) {
         <label className="flex items-center gap-2 text-sm text-gray-700">
           <input
             type="checkbox"
-            checked={aiEnabled}
-            onChange={(e) => setAiEnabled(e.target.checked)}
-            className="rounded border-gray-300"
-          />
-          Enable AI features
-        </label>
-
-        <label className="flex items-center gap-2 text-sm text-gray-700">
-          <input
-            type="checkbox"
             checked={autoRemoveInbox}
             onChange={(e) => setAutoRemoveInbox(e.target.checked)}
             className="rounded border-gray-300"
@@ -168,33 +183,31 @@ export function AIPage({ status, onStatusChange }: Props) {
           &nbsp;"Unclassified" (Primary inbox only)
         </label>
 
-        {aiEnabled && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">AI Provider</label>
-              <select
-                value={aiProvider}
-                onChange={(e) => setAiProvider(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-              >
-                <option value="">Select provider</option>
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">API Key</label>
-              <input
-                type="password"
-                value={aiApiKey}
-                onChange={(e) => setAiApiKey(e.target.value)}
-                placeholder="Enter API key"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <p className="mt-1 text-xs text-gray-400">Leave blank to keep the existing key</p>
-            </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">AI Provider</label>
+            <select
+              value={aiProvider}
+              onChange={(e) => setAiProvider(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            >
+              <option value="">Select provider</option>
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+            </select>
           </div>
-        )}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">API Key</label>
+            <input
+              type="password"
+              value={aiApiKey}
+              onChange={(e) => setAiApiKey(e.target.value)}
+              placeholder="Enter API key"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="mt-1 text-xs text-gray-400">Leave blank to keep the existing key</p>
+          </div>
+        </div>
 
         <div className="flex items-center gap-3 pt-2">
           <button

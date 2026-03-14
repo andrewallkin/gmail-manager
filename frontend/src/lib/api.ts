@@ -253,7 +253,9 @@ export async function deleteRule(id: number): Promise<void> {
   await deleteReq(`/rules/${id}`);
 }
 
-export async function runRule(id: number): Promise<{ matched: number; processed: number; query: string }> {
+export async function runRule(
+  id: number
+): Promise<{ matched: number; processed: number; query: string; pages_scanned: number }> {
   return postJson(`/rules/${id}/run`);
 }
 

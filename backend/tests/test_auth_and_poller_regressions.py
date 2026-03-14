@@ -6,8 +6,9 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import Base
-from app.models import User
+from app.models import Rule, SystemLabelRetention, User
 from app.routers.auth import disconnect_google
+from app.routers import rules as rules_router
 from app.services.google_service import GoogleService
 from app.services import poller
 
@@ -181,3 +182,233 @@ def test_poller_skips_disconnected_user_rows(monkeypatch) -> None:
     poller._run_poll_cycle()
 
     assert called_user_ids == [connected.id]
+
+
+def test_poller_history_paginates_before_cursor_update(monkeypatch) -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+        last_history_id="100",
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    history_calls: list[str | None] = []
+    fetched_messages: list[str] = []
+
+    class _FakeGmailService:
+        def __init__(self, _db: Session) -> None:
+            pass
+
+        def history_list(
+            self,
+            _user: User,
+            start_history_id: str,
+            page_token: str | None = None,
+            max_results: int | None = None,
+        ) -> dict:
+            assert start_history_id == "100"
+            assert max_results is None
+            history_calls.append(page_token)
+            if page_token is None:
+                return {
+                    "historyId": "200",
+                    "history": [{"messagesAdded": [{"message": {"id": "m-1"}}]}],
+                    "nextPageToken": "page-2",
+                }
+            assert page_token == "page-2"
+            return {
+                "historyId": "201",
+                "history": [{"messagesAdded": [{"message": {"id": "m-2"}}]}],
+            }
+
+        def get_message(self, _user: User, msg_id: str, fmt: str = "full") -> dict:
+            assert fmt == "full"
+            fetched_messages.append(msg_id)
+            return {}
+
+    monkeypatch.setattr(poller, "GmailService", _FakeGmailService)
+    poller._poll_user(user, db)
+    db.refresh(user)
+
+    assert history_calls == [None, "page-2"]
+    assert set(fetched_messages) == {"m-1", "m-2"}
+    assert user.last_history_id == "201"
+
+
+def test_run_rule_paginates_all_message_pages(monkeypatch) -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+    )
+    rule = Rule(user_id=1, name="Process all pages")
+    db.add(user)
+    db.commit()
+    rule.user_id = user.id
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+
+    page_tokens_seen: list[str | None] = []
+
+    class _FakeGmailService:
+        def __init__(self, _db: Session) -> None:
+            pass
+
+        def list_messages(
+            self,
+            _user: User,
+            query: str = "",
+            max_results: int = 100,
+            page_token: str | None = None,
+        ) -> dict:
+            assert query
+            assert max_results == 100
+            page_tokens_seen.append(page_token)
+            if page_token is None:
+                return {
+                    "messages": [{"id": "m-1"}, {"id": "m-2"}],
+                    "nextPageToken": "page-2",
+                }
+            assert page_token == "page-2"
+            return {
+                "messages": [{"id": "m-3"}],
+            }
+
+    monkeypatch.setattr(rules_router, "GmailService", _FakeGmailService)
+    result = rules_router.run_rule(rule.id, db=db, user=user)
+    db.refresh(rule)
+
+    assert page_tokens_seen == [None, "page-2"]
+    assert result["matched"] == 3
+    assert result["processed"] == 3
+    assert result["pages_scanned"] == 2
+    assert rule.total_matched == 3
+
+
+def test_retention_cleanup_paginates_all_pages() -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+    )
+    retention = SystemLabelRetention(
+        user_id=1,
+        category="promotions",
+        retention_days=7,
+        enabled=True,
+    )
+    db.add(user)
+    db.commit()
+    retention.user_id = user.id
+    db.add(retention)
+    db.commit()
+
+    class _FakeGmailService:
+        def __init__(self) -> None:
+            self.list_calls: list[str | None] = []
+            self.trashed_batches: list[list[str]] = []
+
+        def list_messages(
+            self,
+            _user: User,
+            query: str = "",
+            max_results: int = 100,
+            page_token: str | None = None,
+        ) -> dict:
+            assert "label:promotions" in query
+            assert max_results == 100
+            self.list_calls.append(page_token)
+            if page_token is None:
+                return {
+                    "messages": [{"id": "m-1"}, {"id": "m-2"}],
+                    "nextPageToken": "page-2",
+                }
+            assert page_token == "page-2"
+            return {
+                "messages": [{"id": "m-3"}],
+            }
+
+        def batch_trash_messages(self, _user: User, msg_ids: list[str]) -> None:
+            self.trashed_batches.append(msg_ids)
+
+    gmail = _FakeGmailService()
+    poller._run_retention_cleanup(user, gmail, db)
+
+    assert gmail.list_calls == [None, "page-2"]
+    assert gmail.trashed_batches == [["m-1", "m-2"], ["m-3"]]
+
+
+def test_preview_rule_counts_all_pages(monkeypatch) -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+    )
+    db.add(user)
+    db.commit()
+
+    page_tokens_seen: list[str | None] = []
+
+    class _FakeGmailService:
+        def __init__(self, _db: Session) -> None:
+            pass
+
+        def list_messages(
+            self,
+            _user: User,
+            query: str = "",
+            max_results: int = 100,
+            page_token: str | None = None,
+        ) -> dict:
+            assert query
+            page_tokens_seen.append(page_token)
+            if page_token is None:
+                assert max_results == 100
+                return {
+                    "messages": [{"id": "m-1"}, {"id": "m-2"}],
+                    "nextPageToken": "page-2",
+                }
+            assert max_results == 500
+            return {
+                "messages": [{"id": "m-3"}],
+            }
+
+        def get_message(self, _user: User, msg_id: str, fmt: str = "full") -> dict:
+            assert fmt == "full"
+            return {
+                "payload": {
+                    "headers": [{"name": "Subject", "value": f"subject-{msg_id}"}],
+                    "body": {},
+                },
+            }
+
+    monkeypatch.setattr(rules_router, "GmailService", _FakeGmailService)
+    result = rules_router.preview_rule(
+        rules_router.RuleCreate(name="preview all pages"),
+        db=db,
+        user=user,
+    )
+
+    assert page_tokens_seen == [None, "page-2"]
+    assert result.estimated_count == 3
+    assert result.sample_subjects == ["subject-m-1", "subject-m-2"]

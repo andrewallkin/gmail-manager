@@ -212,14 +212,25 @@ class GmailService:
         resp.raise_for_status()
         return resp.json()
 
-    def history_list(self, user: User, start_history_id: str) -> dict:
+    def history_list(
+        self,
+        user: User,
+        start_history_id: str,
+        page_token: str | None = None,
+        max_results: int | None = None,
+    ) -> dict:
+        params: dict[str, str | int] = {
+            "startHistoryId": start_history_id,
+            "historyTypes": "messageAdded",
+        }
+        if page_token:
+            params["pageToken"] = page_token
+        if max_results is not None:
+            params["maxResults"] = max_results
         resp = httpx.get(
             f"{GMAIL_API_BASE}/history",
             headers=self._headers(user),
-            params={
-                "startHistoryId": start_history_id,
-                "historyTypes": "messageAdded",
-            },
+            params=params,
             timeout=30,
         )
         resp.raise_for_status()

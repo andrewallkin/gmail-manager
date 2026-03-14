@@ -199,7 +199,7 @@ export function RulesPage() {
     setRunResult(null);
     try {
       const result = await runRule(rule.id);
-      const msg = `Matched ${result.matched}, processed ${result.processed} messages`;
+      const msg = `Matched ${result.matched}, processed ${result.processed} messages across ${result.pages_scanned} page${result.pages_scanned === 1 ? "" : "s"}`;
       setRunResult(result.query ? `${msg}\nQuery: ${result.query}` : msg);
       load(); // Refresh to show updated stats
     } catch {
@@ -434,7 +434,7 @@ export function RulesPage() {
       {preview && (
         <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm">
           <div className="font-medium text-gray-700">
-            ~{preview.estimated_count} email{preview.estimated_count !== 1 ? "s" : ""} match this rule
+            {preview.estimated_count} email{preview.estimated_count !== 1 ? "s" : ""} match this rule
           </div>
           {preview.query && (
             <div className="text-xs text-gray-500 font-mono mt-1 truncate" title={preview.query}>

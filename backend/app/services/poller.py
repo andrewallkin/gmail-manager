@@ -110,7 +110,22 @@ def _poll_user(user: User, db: Session) -> None:
 
     # Get new messages since last history ID
     try:
-        history = gmail.history_list(user, user.last_history_id)
+        history_records: list[dict] = []
+        next_page_token = None
+        new_history_id = None
+        while True:
+            history = gmail.history_list(
+                user,
+                user.last_history_id,
+                page_token=next_page_token,
+            )
+            page_history_id = history.get("historyId")
+            if page_history_id:
+                new_history_id = page_history_id
+            history_records.extend(history.get("history", []))
+            next_page_token = history.get("nextPageToken")
+            if not next_page_token:
+                break
     except Exception as exc:
         # 404 means history ID is too old, reset it
         if "404" in str(exc):
@@ -120,9 +135,6 @@ def _poll_user(user: User, db: Session) -> None:
             log.warning("History ID expired for user=%s, reset", user.email)
             return
         raise
-
-    new_history_id = history.get("historyId")
-    history_records = history.get("history", [])
 
     # Collect new message IDs
     new_msg_ids: set[str] = set()
@@ -267,14 +279,28 @@ def _run_retention_cleanup(user: User, gmail: GmailService, db: Session) -> None
         query = f"label:{retention.category} before:{cutoff_str}"
 
         try:
-            result = gmail.list_messages(user, query=query, max_results=100)
-            messages = result.get("messages", [])
-            if messages:
+            page_token = None
+            total_trashed = 0
+            while True:
+                result = gmail.list_messages(
+                    user,
+                    query=query,
+                    max_results=100,
+                    page_token=page_token,
+                )
+                messages = result.get("messages", [])
+                if not messages:
+                    break
                 msg_ids = [m["id"] for m in messages]
                 gmail.batch_trash_messages(user, msg_ids)
+                total_trashed += len(msg_ids)
+                page_token = result.get("nextPageToken")
+                if not page_token:
+                    break
+            if total_trashed:
                 log.info(
                     "Retention cleanup: trashed %d %s messages older than %d days for user=%s",
-                    len(msg_ids), retention.category, retention.retention_days, user.email,
+                    total_trashed, retention.category, retention.retention_days, user.email,
                 )
         except Exception as exc:
             log.error("Retention cleanup failed for %s: %s", retention.category, exc)

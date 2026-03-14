@@ -7,6 +7,7 @@ type Props = {
 };
 
 export function SettingsPage({ status, onStatusChange }: Props) {
+  const [aiEnabled, setAiEnabled] = useState(status.ai_enabled);
   const [pollingEnabled, setPollingEnabled] = useState(status.polling_enabled);
   const [pollingInterval, setPollingInterval] = useState(status.polling_interval_minutes);
   const [autoRemoveInboxLabeledRead, setAutoRemoveInboxLabeledRead] = useState(
@@ -28,6 +29,7 @@ export function SettingsPage({ status, onStatusChange }: Props) {
   }, []);
 
   useEffect(() => {
+    setAiEnabled(status.ai_enabled);
     setPollingEnabled(status.polling_enabled);
     setPollingInterval(status.polling_interval_minutes);
     setAutoRemoveInboxLabeledRead(status.auto_remove_inbox_labeled_read);
@@ -38,6 +40,7 @@ export function SettingsPage({ status, onStatusChange }: Props) {
     setSaved(false);
     try {
       const updated = await updateSettings({
+        ai_enabled: aiEnabled,
         polling_enabled: pollingEnabled,
         polling_interval_minutes: pollingInterval,
         auto_remove_inbox_labeled_read: autoRemoveInboxLabeledRead,
@@ -98,9 +101,23 @@ export function SettingsPage({ status, onStatusChange }: Props) {
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-gray-900">Polling Settings</h2>
+        <h2 className="text-lg font-semibold text-gray-900">App Settings</h2>
         <p className="text-sm text-gray-500">
-          When enabled, the app automatically checks for new emails and runs rules.
+          Manage AI availability and automated inbox processing behavior.
+        </p>
+
+        <label className="flex items-center gap-2 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            checked={aiEnabled}
+            onChange={(e) => setAiEnabled(e.target.checked)}
+            className="rounded border-gray-300"
+          />
+          Enable AI features
+        </label>
+
+        <p className="text-sm text-gray-500">
+          When polling is enabled, the app automatically checks for new emails and runs rules.
         </p>
 
         <label className="flex items-center gap-2 text-sm text-gray-700">
@@ -149,9 +166,9 @@ export function SettingsPage({ status, onStatusChange }: Props) {
             disabled={saving}
             className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition-colors"
           >
-            {saving ? "Saving..." : "Save Polling Settings"}
+            {saving ? "Saving..." : "Save App Settings"}
           </button>
-          {saved && <span className="text-sm text-green-600">Polling settings saved</span>}
+          {saved && <span className="text-sm text-green-600">App settings saved</span>}
         </div>
       </div>
 

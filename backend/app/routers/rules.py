@@ -140,9 +140,16 @@ def preview_rule(
         return PreviewOut(estimated_count=0, query="", sample_subjects=[])
 
     gmail = GmailService(db)
-    result = gmail.list_messages(user, query=query, max_results=50)
+    result = gmail.list_messages(user, query=query, max_results=100)
     messages = result.get("messages", [])
     estimated_count = len(messages)
+    page_token = result.get("nextPageToken")
+
+    while page_token:
+        result = gmail.list_messages(user, query=query, max_results=500, page_token=page_token)
+        page_messages = result.get("messages", [])
+        estimated_count += len(page_messages)
+        page_token = result.get("nextPageToken")
 
     # Fetch subjects of first 5 matches
     sample_subjects: list[str] = []
@@ -209,14 +216,36 @@ def run_rule(
         raise HTTPException(status_code=400, detail="Rule has no match criteria")
 
     gmail = GmailService(db)
-    result = gmail.list_messages(user, query=query, max_results=100)
-    messages = result.get("messages", [])
+    matched = 0
+    processed = 0
+    pages_scanned = 0
+    page_token = None
 
-    if not messages:
-        return {"matched": 0, "processed": 0, "query": query}
+    while True:
+        result = gmail.list_messages(user, query=query, max_results=100, page_token=page_token)
+        pages_scanned += 1
+        messages = result.get("messages", [])
+        if not messages:
+            break
 
-    msg_ids = [m["id"] for m in messages]
-    processed = apply_rule_actions(rule, msg_ids, gmail, user, db)
+        msg_ids = [m["id"] for m in messages]
+        matched += len(messages)
+        processed += apply_rule_actions(rule, msg_ids, gmail, user, db)
 
-    log.info("Ran rule '%s': matched=%d processed=%d", rule.name, len(messages), processed)
-    return {"matched": len(messages), "processed": processed, "query": query}
+        page_token = result.get("nextPageToken")
+        if not page_token:
+            break
+
+    log.info(
+        "Ran rule '%s': matched=%d processed=%d pages=%d",
+        rule.name,
+        matched,
+        processed,
+        pages_scanned,
+    )
+    return {
+        "matched": matched,
+        "processed": processed,
+        "query": query,
+        "pages_scanned": pages_scanned,
+    }
