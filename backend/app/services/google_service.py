@@ -4,7 +4,7 @@ from urllib.parse import urlencode
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -75,9 +75,15 @@ class GoogleService:
         google_id = user_info["id"]
         user = db.scalar(select(User).where(User.google_id == google_id).limit(1))
         if not user:
+            # Single-user mode: reconnect should reuse the same local user row.
+            user = db.scalar(
+                select(User).where(func.lower(User.email) == email.lower()).limit(1)
+            )
+        if not user:
             user = User(google_id=google_id)
             db.add(user)
 
+        user.google_id = google_id
         user.email = email
         user.display_name = user_info.get("name")
         user.profile_picture_url = user_info.get("picture")

@@ -61,7 +61,14 @@ def _poll_tick() -> None:
 def _run_poll_cycle() -> None:
     db: Session = SessionLocal()
     try:
-        users = db.scalars(select(User).where(User.polling_enabled == True)).all()  # noqa: E712
+        users = db.scalars(
+            select(User).where(
+                User.polling_enabled == True,  # noqa: E712
+                User.google_id.isnot(None),
+                User.access_token.isnot(None),
+                User.refresh_token.isnot(None),
+            )
+        ).all()
         now = datetime.now(timezone.utc)
 
         for user in users:
@@ -73,6 +80,17 @@ def _run_poll_cycle() -> None:
             _last_poll_per_user[user.id] = now
             try:
                 _poll_user(user, db)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 401:
+                    user.polling_enabled = False
+                    db.commit()
+                    _last_poll_per_user.pop(user.id, None)
+                    log.warning(
+                        "Disabled polling after Gmail 401 for user=%s; reconnect Google and re-enable polling.",
+                        user.email,
+                    )
+                else:
+                    log.error("Poll failed for user=%s: %s", user.email, exc)
             except Exception as exc:
                 log.error("Poll failed for user=%s: %s", user.email, exc)
     finally:
