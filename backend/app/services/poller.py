@@ -218,6 +218,7 @@ def _poll_user(user: User, db: Session) -> None:
 
     # Run retention cleanup
     _run_retention_cleanup(user, gmail, db)
+    _run_label_retention_cleanup(user, gmail, db)
 
     # Update history ID
     if new_history_id:
@@ -236,11 +237,7 @@ def _run_inbox_removal_sweep(user: User, gmail: GmailService, db: Session) -> No
     label_clauses = " OR ".join(
         f"label:{l.name.replace(' ', '-')}" for l in user_labels
     )
-    query = (
-        f"is:read in:inbox "
-        f"-category:promotions -category:social -category:updates -category:forums "
-        f"{{{label_clauses}}}"
-    )
+    query = f"is:read in:inbox {{{label_clauses}}}"
 
     try:
         page_token = None
@@ -266,12 +263,6 @@ def _run_inbox_removal_sweep(user: User, gmail: GmailService, db: Session) -> No
 
 
 def _run_retention_cleanup(user: User, gmail: GmailService, db: Session) -> None:
-    user_label_ids = {
-        label.gmail_label_id
-        for label in db.scalars(
-            select(Label).where(Label.user_id == user.id, Label.label_type == "user")
-        ).all()
-    }
     retentions = db.scalars(
         select(SystemLabelRetention).where(
             SystemLabelRetention.user_id == user.id,
@@ -282,7 +273,7 @@ def _run_retention_cleanup(user: User, gmail: GmailService, db: Session) -> None
     for retention in retentions:
         cutoff = datetime.now(timezone.utc) - timedelta(days=retention.retention_days)
         cutoff_str = cutoff.strftime("%Y/%m/%d")
-        query = f"label:{retention.category} before:{cutoff_str}"
+        query = f"label:{retention.category} before:{cutoff_str} -has:userlabels"
 
         try:
             page_token = None
@@ -298,26 +289,8 @@ def _run_retention_cleanup(user: User, gmail: GmailService, db: Session) -> None
                 if not messages:
                     break
                 msg_ids = [m["id"] for m in messages]
-                trashable_msg_ids = msg_ids
-                if user_label_ids:
-                    trashable_msg_ids = []
-                    for msg_id in msg_ids:
-                        try:
-                            message = gmail.get_message(user, msg_id, fmt="metadata")
-                        except Exception as exc:
-                            log.warning(
-                                "Retention cleanup: skipping msg=%s after metadata fetch failure: %s",
-                                msg_id, exc,
-                            )
-                            continue
-
-                        message_label_ids = set(message.get("labelIds", []))
-                        if message_label_ids.isdisjoint(user_label_ids):
-                            trashable_msg_ids.append(msg_id)
-
-                if trashable_msg_ids:
-                    gmail.batch_trash_messages(user, trashable_msg_ids)
-                    total_trashed += len(trashable_msg_ids)
+                gmail.batch_trash_messages(user, msg_ids)
+                total_trashed += len(msg_ids)
                 page_token = result.get("nextPageToken")
                 if not page_token:
                     break
@@ -328,3 +301,47 @@ def _run_retention_cleanup(user: User, gmail: GmailService, db: Session) -> None
                 )
         except Exception as exc:
             log.error("Retention cleanup failed for %s: %s", retention.category, exc)
+
+
+def _run_label_retention_cleanup(user: User, gmail: GmailService, db: Session) -> None:
+    """Trash emails with user labels that have retention_days set and are past the cutoff."""
+    labels_with_retention = db.scalars(
+        select(Label).where(
+            Label.user_id == user.id,
+            Label.label_type == "user",
+            Label.retention_days.isnot(None),
+        )
+    ).all()
+
+    for label in labels_with_retention:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=label.retention_days)
+        cutoff_str = cutoff.strftime("%Y/%m/%d")
+        label_term = label.name.replace(" ", "-")
+        query = f"label:{label_term} before:{cutoff_str}"
+
+        try:
+            page_token = None
+            total_trashed = 0
+            while True:
+                result = gmail.list_messages(
+                    user,
+                    query=query,
+                    max_results=100,
+                    page_token=page_token,
+                )
+                messages = result.get("messages", [])
+                if not messages:
+                    break
+                msg_ids = [m["id"] for m in messages]
+                gmail.batch_trash_messages(user, msg_ids)
+                total_trashed += len(msg_ids)
+                page_token = result.get("nextPageToken")
+                if not page_token:
+                    break
+            if total_trashed:
+                log.info(
+                    "Label retention cleanup: trashed %d '%s' messages older than %d days for user=%s",
+                    total_trashed, label.name, label.retention_days, user.email,
+                )
+        except Exception as exc:
+            log.error("Label retention cleanup failed for '%s': %s", label.name, exc)

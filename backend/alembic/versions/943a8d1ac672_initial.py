@@ -1,8 +1,8 @@
-"""initial_schema
+"""initial
 
-Revision ID: f84b4fec0a8b
+Revision ID: 943a8d1ac672
 Revises: 
-Create Date: 2026-03-13 08:12:08.854430
+Create Date: 2026-03-15 08:53:48.849363
 
 """
 from alembic import op
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = 'f84b4fec0a8b'
+revision = '943a8d1ac672'
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -30,6 +30,7 @@ def upgrade() -> None:
     sa.Column('ai_enabled', sa.Boolean(), nullable=False),
     sa.Column('ai_provider', sa.String(length=64), nullable=True),
     sa.Column('ai_api_key', sa.Text(), nullable=True),
+    sa.Column('auto_remove_inbox_labeled_read', sa.Boolean(), nullable=False),
     sa.Column('last_history_id', sa.String(length=255), nullable=True),
     sa.Column('polling_enabled', sa.Boolean(), nullable=False),
     sa.Column('polling_interval_minutes', sa.Integer(), nullable=False),
@@ -70,8 +71,10 @@ def upgrade() -> None:
     sa.Column('label_type', sa.String(length=32), nullable=False),
     sa.Column('color_bg', sa.String(length=32), nullable=True),
     sa.Column('color_text', sa.String(length=32), nullable=True),
+    sa.Column('ai_description', sa.Text(), nullable=True),
     sa.Column('message_count', sa.Integer(), nullable=False),
     sa.Column('unread_count', sa.Integer(), nullable=False),
+    sa.Column('retention_days', sa.Integer(), nullable=True),
     sa.Column('synced_at', sa.DateTime(), nullable=True),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
     sa.PrimaryKeyConstraint('id'),
@@ -103,13 +106,12 @@ def upgrade() -> None:
     sa.Column('action_archive', sa.Boolean(), nullable=False),
     sa.Column('action_delete', sa.Boolean(), nullable=False),
     sa.Column('action_mark_read', sa.Boolean(), nullable=False),
-    sa.Column('action_delete_after_days', sa.Integer(), nullable=True),
-    sa.Column('scope_promotions', sa.Boolean(), nullable=False),
-    sa.Column('scope_social', sa.Boolean(), nullable=False),
-    sa.Column('scope_updates', sa.Boolean(), nullable=False),
-    sa.Column('scope_forums', sa.Boolean(), nullable=False),
+    sa.Column('scope', sa.String(length=16), nullable=False),
     sa.Column('use_ai', sa.Boolean(), nullable=False),
     sa.Column('ai_prompt', sa.Text(), nullable=True),
+    sa.Column('priority', sa.Integer(), nullable=False),
+    sa.Column('total_matched', sa.Integer(), nullable=False),
+    sa.Column('last_matched_at', sa.DateTime(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.ForeignKeyConstraint(['action_label_id'], ['labels.id'], ),

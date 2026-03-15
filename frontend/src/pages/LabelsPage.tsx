@@ -41,6 +41,7 @@ export function LabelsPage() {
   const [editName, setEditName] = useState("");
   const [editBg, setEditBg] = useState("");
   const [editText, setEditText] = useState("");
+  const [editRetention, setEditRetention] = useState<string>("");
   const [savingEdit, setSavingEdit] = useState(false);
   const [typeFilter, setTypeFilter] = useState<"all" | "user" | "system">("user");
   const [typeSortDirection, setTypeSortDirection] = useState<"asc" | "desc" | null>(null);
@@ -89,6 +90,7 @@ export function LabelsPage() {
     setEditName(label.name);
     setEditBg(label.color_bg ?? "");
     setEditText(label.color_text ?? "");
+    setEditRetention(label.retention_days != null ? String(label.retention_days) : "");
   };
 
   const handleSaveEdit = async () => {
@@ -99,6 +101,7 @@ export function LabelsPage() {
         name: editName,
         bg_color: editBg || undefined,
         text_color: editText || undefined,
+        retention_days: editRetention ? Number(editRetention) : null,
       });
       setEditingId(null);
       load();
@@ -234,6 +237,7 @@ export function LabelsPage() {
               </th>
               <th className="text-right px-4 py-3 font-medium text-gray-500">Messages</th>
               <th className="text-right px-4 py-3 font-medium text-gray-500">Unread</th>
+              <th className="text-right px-4 py-3 font-medium text-gray-500">Retention</th>
               <th className="text-right px-4 py-3 font-medium text-gray-500">Actions</th>
             </tr>
           </thead>
@@ -250,6 +254,17 @@ export function LabelsPage() {
                         className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
                       <ColorPicker selectedBg={editBg} onSelect={(bg, text) => { setEditBg(bg); setEditText(text); }} />
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Retention (days)</label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={editRetention}
+                          onChange={(e) => setEditRetention(e.target.value)}
+                          placeholder="Always"
+                          className="w-32 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
                       <div className="flex gap-2">
                         <button
                           onClick={handleSaveEdit}
@@ -287,6 +302,11 @@ export function LabelsPage() {
                 </td>
                 <td className="px-4 py-3 text-right text-gray-600">{label.message_count}</td>
                 <td className="px-4 py-3 text-right text-gray-600">{label.unread_count}</td>
+                <td className="px-4 py-3 text-right text-gray-600">
+                  {label.label_type === "user" ? (
+                    label.retention_days != null ? `${label.retention_days} days` : "Always"
+                  ) : ""}
+                </td>
                 <td className="px-4 py-3 text-right">
                   {label.label_type === "user" && editingId !== label.id && (
                     <div className="flex justify-end gap-2">
@@ -309,7 +329,7 @@ export function LabelsPage() {
             ))}
             {displayed.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-gray-500">
+                <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
                   {emptyMessage}
                 </td>
               </tr>

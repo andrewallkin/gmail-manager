@@ -398,6 +398,7 @@ def test_retention_cleanup_paginates_all_pages() -> None:
         def __init__(self) -> None:
             self.list_calls: list[str | None] = []
             self.trashed_batches: list[list[str]] = []
+            self.seen_queries: list[str] = []
 
         def list_messages(
             self,
@@ -407,8 +408,10 @@ def test_retention_cleanup_paginates_all_pages() -> None:
             page_token: str | None = None,
         ) -> dict:
             assert "label:promotions" in query
+            assert "-has:userlabels" in query
             assert max_results == 100
             self.list_calls.append(page_token)
+            self.seen_queries.append(query)
             if page_token is None:
                 return {
                     "messages": [{"id": "m-1"}, {"id": "m-2"}],
@@ -429,7 +432,8 @@ def test_retention_cleanup_paginates_all_pages() -> None:
     assert gmail.trashed_batches == [["m-1", "m-2"], ["m-3"]]
 
 
-def test_retention_cleanup_skips_messages_with_user_labels() -> None:
+def test_retention_cleanup_uses_userlabels_filter() -> None:
+    """Retention cleanup query includes -has:userlabels so no per-message fetch is needed."""
     db = _make_db()
     user = User(
         google_id="gid-1",
@@ -443,25 +447,19 @@ def test_retention_cleanup_skips_messages_with_user_labels() -> None:
     db.commit()
     db.refresh(user)
 
-    user_label = Label(
-        user_id=user.id,
-        gmail_label_id="Label_99",
-        name="Newsletters",
-        label_type="user",
-    )
     retention = SystemLabelRetention(
         user_id=user.id,
         category="promotions",
         retention_days=30,
         enabled=True,
     )
-    db.add_all([user_label, retention])
+    db.add(retention)
     db.commit()
 
     class _FakeGmailService:
         def __init__(self) -> None:
             self.trashed_batches: list[list[str]] = []
-            self.metadata_calls: list[str] = []
+            self.seen_queries: list[str] = []
 
         def list_messages(
             self,
@@ -470,20 +468,8 @@ def test_retention_cleanup_skips_messages_with_user_labels() -> None:
             max_results: int = 100,
             page_token: str | None = None,
         ) -> dict:
-            assert "label:promotions" in query
-            assert max_results == 100
-            assert page_token is None
+            self.seen_queries.append(query)
             return {"messages": [{"id": "m-1"}, {"id": "m-2"}, {"id": "m-3"}]}
-
-        def get_message(self, _user: User, msg_id: str, fmt: str = "full") -> dict:
-            assert fmt == "metadata"
-            self.metadata_calls.append(msg_id)
-            label_ids = {
-                "m-1": ["CATEGORY_PROMOTIONS", "Label_99"],
-                "m-2": ["CATEGORY_PROMOTIONS"],
-                "m-3": ["CATEGORY_PROMOTIONS", "STARRED"],
-            }
-            return {"labelIds": label_ids[msg_id]}
 
         def batch_trash_messages(self, _user: User, msg_ids: list[str]) -> None:
             self.trashed_batches.append(msg_ids)
@@ -491,8 +477,60 @@ def test_retention_cleanup_skips_messages_with_user_labels() -> None:
     gmail = _FakeGmailService()
     poller._run_retention_cleanup(user, gmail, db)
 
-    assert gmail.metadata_calls == ["m-1", "m-2", "m-3"]
-    assert gmail.trashed_batches == [["m-2", "m-3"]]
+    assert len(gmail.seen_queries) == 1
+    assert "-has:userlabels" in gmail.seen_queries[0]
+    assert gmail.trashed_batches == [["m-1", "m-2", "m-3"]]
+
+
+def test_label_retention_cleanup() -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    label = Label(
+        user_id=user.id,
+        gmail_label_id="Label_42",
+        name="Newsletters",
+        label_type="user",
+        retention_days=14,
+    )
+    db.add(label)
+    db.commit()
+
+    class _FakeGmailService:
+        def __init__(self) -> None:
+            self.trashed_batches: list[list[str]] = []
+            self.seen_queries: list[str] = []
+
+        def list_messages(
+            self,
+            _user: User,
+            query: str = "",
+            max_results: int = 100,
+            page_token: str | None = None,
+        ) -> dict:
+            self.seen_queries.append(query)
+            return {"messages": [{"id": "m-1"}, {"id": "m-2"}]}
+
+        def batch_trash_messages(self, _user: User, msg_ids: list[str]) -> None:
+            self.trashed_batches.append(msg_ids)
+
+    gmail = _FakeGmailService()
+    poller._run_label_retention_cleanup(user, gmail, db)
+
+    assert len(gmail.seen_queries) == 1
+    assert "label:Newsletters" in gmail.seen_queries[0]
+    assert "before:" in gmail.seen_queries[0]
+    assert gmail.trashed_batches == [["m-1", "m-2"]]
 
 
 def test_preview_rule_counts_all_pages(monkeypatch) -> None:

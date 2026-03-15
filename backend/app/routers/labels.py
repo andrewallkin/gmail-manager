@@ -26,6 +26,7 @@ class LabelUpdate(BaseModel):
     bg_color: str | None = None
     text_color: str | None = None
     ai_description: str | None = None
+    retention_days: int | None = None
 
 
 class LabelOut(BaseModel):
@@ -36,6 +37,7 @@ class LabelOut(BaseModel):
     color_bg: str | None
     color_text: str | None
     ai_description: str | None
+    retention_days: int | None
     message_count: int
     unread_count: int
     synced_at: datetime | None
@@ -150,6 +152,8 @@ def patch_label(
         label.color_text = body.text_color
     if body.ai_description is not None:
         label.ai_description = body.ai_description
+    if "retention_days" in body.model_fields_set:
+        label.retention_days = body.retention_days if body.retention_days else None
     db.commit()
     db.refresh(label)
     log.info("Updated label '%s' for user=%s", label.name, user.email)

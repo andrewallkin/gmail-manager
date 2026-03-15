@@ -47,27 +47,10 @@ def build_rule_query(rule: Rule, db: Session, exclude_action_label: bool = False
             query_parts.append(f"-label:{_to_gmail_label_term(action_label.name)}")
 
     # Scope filtering
-    if rule.scope_all_inbox:
-        # All inbox categories: no category exclusions
+    if rule.scope == "all_inbox":
         query_parts.append("in:inbox")
     else:
-        scopes = []
-        if rule.scope_promotions:
-            scopes.append("category:promotions")
-        if rule.scope_social:
-            scopes.append("category:social")
-        if rule.scope_updates:
-            scopes.append("category:updates")
-        if rule.scope_forums:
-            scopes.append("category:forums")
-
-        if scopes:
-            # Match any of the selected categories
-            scope_query = " OR ".join(scopes)
-            query_parts.append(f"({scope_query})")
-        else:
-            # No scope = Primary inbox only
-            query_parts.append("in:inbox -category:promotions -category:social -category:updates -category:forums")
+        query_parts.append("in:inbox -category:promotions -category:social -category:updates -category:forums")
 
     return " ".join(query_parts)
 
@@ -142,28 +125,14 @@ def message_matches_rule(rule: Rule, details: dict, db: Session) -> bool:
             return False
 
     # Scope check
-    if rule.scope_all_inbox:
-        # All inbox: accept any message in inbox (no category filter)
+    if rule.scope == "all_inbox":
         if "INBOX" not in label_ids:
             return False
     else:
-        scopes = []
-        if rule.scope_promotions:
-            scopes.append("CATEGORY_PROMOTIONS")
-        if rule.scope_social:
-            scopes.append("CATEGORY_SOCIAL")
-        if rule.scope_updates:
-            scopes.append("CATEGORY_UPDATES")
-        if rule.scope_forums:
-            scopes.append("CATEGORY_FORUMS")
-
-        if scopes:
-            if not any(s in label_ids for s in scopes):
-                return False
-        else:
-            # Primary only: reject if message has any category label
-            category_ids = set(CATEGORY_LABELS.values())
-            if any(lid in category_ids for lid in label_ids):
-                return False
+        if "INBOX" not in label_ids:
+            return False
+        category_ids = set(CATEGORY_LABELS.values())
+        if any(lid in category_ids for lid in label_ids):
+            return False
 
     return True

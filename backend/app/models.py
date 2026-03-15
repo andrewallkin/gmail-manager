@@ -43,6 +43,7 @@ class Label(Base):
     ai_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     message_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     unread_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
@@ -63,12 +64,7 @@ class Rule(Base):
     action_archive: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     action_delete: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     action_mark_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    action_delete_after_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    scope_promotions: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    scope_social: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    scope_updates: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    scope_forums: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    scope_all_inbox: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    scope: Mapped[str] = mapped_column(String(16), default="primary", nullable=False)
     use_ai: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ai_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

@@ -33,6 +33,7 @@ export type LabelItem = {
   color_bg: string | null;
   color_text: string | null;
   ai_description: string | null;
+  retention_days: number | null;
   message_count: number;
   unread_count: number;
   synced_at: string | null;
@@ -52,12 +53,7 @@ export type RuleItem = {
   action_archive: boolean;
   action_delete: boolean;
   action_mark_read: boolean;
-  action_delete_after_days: number | null;
-  scope_promotions: boolean;
-  scope_social: boolean;
-  scope_updates: boolean;
-  scope_forums: boolean;
-  scope_all_inbox: boolean;
+  scope: "primary" | "all_inbox";
   use_ai: boolean;
   ai_prompt: string | null;
   priority: number;
@@ -80,12 +76,7 @@ export type RuleCreate = {
   action_archive?: boolean;
   action_delete?: boolean;
   action_mark_read?: boolean;
-  action_delete_after_days?: number | null;
-  scope_promotions?: boolean;
-  scope_social?: boolean;
-  scope_updates?: boolean;
-  scope_forums?: boolean;
-  scope_all_inbox?: boolean;
+  scope?: "primary" | "all_inbox";
   use_ai?: boolean;
   ai_prompt?: string | null;
   priority?: number;
@@ -236,7 +227,7 @@ export async function createLabel(name: string, bg_color?: string, text_color?: 
 
 export async function updateLabel(
   id: number,
-  body: { name?: string; bg_color?: string; text_color?: string; ai_description?: string }
+  body: { name?: string; bg_color?: string; text_color?: string; ai_description?: string; retention_days?: number | null }
 ): Promise<LabelItem> {
   return patchJson(`/labels/${id}`, body);
 }

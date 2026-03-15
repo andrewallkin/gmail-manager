@@ -74,6 +74,14 @@ frontend/src/
     └── format.ts     # Utility formatting
 ```
 
+## Schema Changes & Migrations
+Whenever you modify `backend/app/models.py` (add/remove/alter columns, tables, or constraints), you **must** immediately generate a corresponding Alembic migration:
+1. Run `make migrate-create MSG='short_description_of_change'` — this autogenerates a migration inside Docker that correctly chains off the latest revision.
+2. Review the generated file in `backend/alembic/versions/` to verify the `upgrade()` and `downgrade()` operations match your intent.
+3. Run `make migrate` to apply the migration to the dev database.
+
+Do **not** hand-write migration files or manually set `Revises:` — always use `make migrate-create` so Alembic resolves the revision chain automatically.
+
 ## Key Patterns
 - **Auth flow:** Google OAuth → callback → exchange code → issue JWT → HttpOnly cookie (`gmail_auth`)
 - **Single-user mode:** `GOOGLE_ALLOWED_EMAIL` env var restricts access to one Google account

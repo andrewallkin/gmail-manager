@@ -29,12 +29,7 @@ class RuleCreate(BaseModel):
     action_archive: bool = False
     action_delete: bool = False
     action_mark_read: bool = False
-    action_delete_after_days: int | None = None
-    scope_promotions: bool = False
-    scope_social: bool = False
-    scope_updates: bool = False
-    scope_forums: bool = False
-    scope_all_inbox: bool = False
+    scope: str = "primary"
     use_ai: bool = False
     ai_prompt: str | None = None
     priority: int = 0
@@ -58,12 +53,7 @@ class RuleOut(BaseModel):
     action_archive: bool
     action_delete: bool
     action_mark_read: bool
-    action_delete_after_days: int | None
-    scope_promotions: bool
-    scope_social: bool
-    scope_updates: bool
-    scope_forums: bool
-    scope_all_inbox: bool
+    scope: str
     use_ai: bool
     ai_prompt: str | None
     priority: int

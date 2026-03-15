@@ -18,21 +18,8 @@ const emptyRule: RuleCreate = {
   action_archive: false,
   action_delete: false,
   action_mark_read: false,
-  action_delete_after_days: null,
-  scope_promotions: false,
-  scope_social: false,
-  scope_updates: false,
-  scope_forums: false,
-  scope_all_inbox: false,
+  scope: "primary",
 };
-
-const SCOPE_OPTIONS = [
-  { key: "scope_all_inbox" as const, label: "All inbox" },
-  { key: "scope_promotions" as const, label: "Promotions" },
-  { key: "scope_social" as const, label: "Social" },
-  { key: "scope_updates" as const, label: "Updates" },
-  { key: "scope_forums" as const, label: "Forums" },
-];
 
 function relativeTime(dateStr: string | null): string {
   if (!dateStr) return "";
@@ -157,12 +144,7 @@ export function RulesPage() {
       action_archive: rule.action_archive,
       action_delete: rule.action_delete,
       action_mark_read: rule.action_mark_read,
-      action_delete_after_days: rule.action_delete_after_days,
-      scope_promotions: rule.scope_promotions,
-      scope_social: rule.scope_social,
-      scope_updates: rule.scope_updates,
-      scope_forums: rule.scope_forums,
-      scope_all_inbox: rule.scope_all_inbox ?? false,
+      scope: rule.scope,
       use_ai: rule.use_ai,
       ai_prompt: rule.ai_prompt,
     });
@@ -223,13 +205,7 @@ export function RulesPage() {
   };
 
   const getScopeBadges = (rule: RuleItem) => {
-    if (rule.scope_all_inbox ?? false) return ["All inbox"];
-    const scopes: string[] = [];
-    if (rule.scope_promotions) scopes.push("Promotions");
-    if (rule.scope_social) scopes.push("Social");
-    if (rule.scope_updates) scopes.push("Updates");
-    if (rule.scope_forums) scopes.push("Forums");
-    return scopes.length > 0 ? scopes : ["Primary"];
+    return rule.scope === "all_inbox" ? ["All Inbox"] : ["Primary"];
   };
 
   // Drag and drop handlers
@@ -352,22 +328,28 @@ export function RulesPage() {
 
       {/* Scope Section */}
       <CollapsibleSection title="Scope">
-        <p className="text-xs text-gray-400 mb-2">Select categories to target. No categories = Primary inbox only.</p>
-        {(form.match_from ?? "").toLowerCase().includes("receipt") && !form.scope_all_inbox && !form.scope_updates && (
-          <p className="text-xs text-amber-600 mb-2">Tip: Receipt emails often land in Updates. Consider checking Updates or All inbox.</p>
-        )}
+        <p className="text-xs text-gray-400 mb-2">Choose which inbox messages this rule applies to.</p>
         <div className="flex flex-wrap gap-4">
-          {SCOPE_OPTIONS.map(({ key, label }) => (
-            <label key={key} className="flex items-center gap-2 text-sm text-gray-700">
-              <input
-                type="checkbox"
-                checked={form[key] ?? false}
-                onChange={(e) => updateField(key, e.target.checked)}
-                className="rounded border-gray-300"
-              />
-              {label}
-            </label>
-          ))}
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="radio"
+              name="scope"
+              checked={form.scope === "primary"}
+              onChange={() => updateField("scope", "primary")}
+              className="border-gray-300"
+            />
+            Primary
+          </label>
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="radio"
+              name="scope"
+              checked={form.scope === "all_inbox"}
+              onChange={() => updateField("scope", "all_inbox")}
+              className="border-gray-300"
+            />
+            All Inbox
+          </label>
         </div>
       </CollapsibleSection>
 
@@ -415,19 +397,6 @@ export function RulesPage() {
             ))}
           </select>
         </div>
-        {!form.action_delete && (
-          <div className="mt-3">
-            <label className="block text-xs font-medium text-gray-600 mb-1">Auto-delete after N days</label>
-            <input
-              type="number"
-              min={1}
-              value={form.action_delete_after_days ?? ""}
-              onChange={(e) => updateField("action_delete_after_days", e.target.value ? Number(e.target.value) : null)}
-              placeholder="e.g., 30"
-              className="w-full sm:w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-        )}
       </CollapsibleSection>
 
       {/* Preview result */}
@@ -532,7 +501,6 @@ export function RulesPage() {
                       {rule.match_doesnt_have && <div>Excludes: {rule.match_doesnt_have}</div>}
                       {rule.match_label_id && <div>Match label: {labelName(rule.match_label_id) ?? `#${rule.match_label_id}`}</div>}
                       {rule.action_label_id && <div>Apply label: {labelName(rule.action_label_id) ?? `#${rule.action_label_id}`}</div>}
-                      {rule.action_delete_after_days && <div>Auto-delete after {rule.action_delete_after_days} days</div>}
                     </div>
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {getScopeBadges(rule).map(s => (
