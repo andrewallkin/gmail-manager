@@ -189,6 +189,7 @@ export function RulesPage() {
       scope: rule.scope,
       use_ai: rule.use_ai,
       ai_prompt: rule.ai_prompt,
+      priority: rule.priority,
     });
     setEditingId(rule.id);
     setPreview(null);
