@@ -1,6 +1,8 @@
 import logging
 import threading
 from datetime import datetime, timedelta, timezone
+from time import perf_counter
+from uuid import uuid4
 
 import httpx
 from sqlalchemy import select
@@ -59,6 +61,8 @@ def _poll_tick() -> None:
 
 
 def _run_poll_cycle() -> None:
+    cycle_id = uuid4().hex[:12]
+    cycle_started_at = perf_counter()
     db: Session = SessionLocal()
     try:
         users = db.scalars(
@@ -70,55 +74,135 @@ def _run_poll_cycle() -> None:
             )
         ).all()
         now = datetime.now(timezone.utc)
+        eligible_users = len(users)
+        processed_users = 0
+        skipped_interval_users = 0
+        failed_users = 0
+
+        log.info("event=poll_cycle_started cycle_id=%s eligible_users=%d", cycle_id, eligible_users)
+        if not users:
+            log.info("event=poll_cycle_no_eligible_users cycle_id=%s", cycle_id)
 
         for user in users:
             last_poll = _last_poll_per_user.get(user.id)
             interval = timedelta(minutes=user.polling_interval_minutes)
             if last_poll and (now - last_poll) < interval:
+                skipped_interval_users += 1
+                log.info(
+                    "event=poll_user_skipped_interval cycle_id=%s user=%s user_id=%s interval_minutes=%d seconds_since_last_poll=%.2f",
+                    cycle_id,
+                    user.email,
+                    user.id,
+                    user.polling_interval_minutes,
+                    (now - last_poll).total_seconds(),
+                )
                 continue
 
             _last_poll_per_user[user.id] = now
             try:
-                _poll_user(user, db)
+                _poll_user(user, db, cycle_id=cycle_id)
+                processed_users += 1
             except httpx.HTTPStatusError as exc:
+                failed_users += 1
                 if exc.response.status_code == 401:
                     user.polling_enabled = False
                     db.commit()
                     _last_poll_per_user.pop(user.id, None)
                     log.warning(
-                        "Disabled polling after Gmail 401 for user=%s; reconnect Google and re-enable polling.",
+                        "event=poll_user_failed_auth_401 cycle_id=%s user=%s user_id=%s action=disabled_polling",
+                        cycle_id,
                         user.email,
+                        user.id,
                     )
                 else:
-                    log.error("Poll failed for user=%s: %s", user.email, exc)
+                    log.error(
+                        "event=poll_user_failed cycle_id=%s user=%s user_id=%s error=%s",
+                        cycle_id,
+                        user.email,
+                        user.id,
+                        exc,
+                    )
             except Exception as exc:
-                log.error("Poll failed for user=%s: %s", user.email, exc)
+                failed_users += 1
+                log.error(
+                    "event=poll_user_failed cycle_id=%s user=%s user_id=%s error=%s",
+                    cycle_id,
+                    user.email,
+                    user.id,
+                    exc,
+                )
     finally:
+        duration_ms = int((perf_counter() - cycle_started_at) * 1000)
+        log.info(
+            "event=poll_cycle_finished cycle_id=%s eligible_users=%d processed_users=%d skipped_interval_users=%d failed_users=%d duration_ms=%d",
+            cycle_id,
+            locals().get("eligible_users", 0),
+            locals().get("processed_users", 0),
+            locals().get("skipped_interval_users", 0),
+            locals().get("failed_users", 0),
+            duration_ms,
+        )
         db.close()
 
 
-def _poll_user(user: User, db: Session) -> None:
+def _poll_user(user: User, db: Session, cycle_id: str = "manual") -> None:
+    user_started_at = perf_counter()
     gmail = GmailService(db)
+    new_msg_ids: set[str] = set()
+    rules_loaded = 0
+    message_processed = 0
+    message_rule_applied = 0
+    message_ai_labeled = 0
+    message_ai_none = 0
+    message_no_rule_match = 0
+    message_skipped_non_primary = 0
+    message_missing = 0
+    message_error = 0
+    history_records_count = 0
+    history_pages = 0
+    new_history_id = None
+
+    log.info(
+        "event=poll_user_started cycle_id=%s user=%s user_id=%s interval_minutes=%d last_history_id=%s",
+        cycle_id,
+        user.email,
+        user.id,
+        user.polling_interval_minutes,
+        user.last_history_id or "none",
+    )
 
     # Initialize history_id if not set
     if not user.last_history_id:
         profile = gmail.get_profile(user)
         user.last_history_id = str(profile.get("historyId", ""))
         db.commit()
-        log.info("Initialized history_id for user=%s", user.email)
+        log.info(
+            "event=poll_user_initialized_history cycle_id=%s user=%s user_id=%s history_id=%s",
+            cycle_id,
+            user.email,
+            user.id,
+            user.last_history_id or "none",
+        )
+        log.info(
+            "event=poll_user_finished cycle_id=%s user=%s user_id=%s new_messages=0 rules_loaded=0 message_processed=0 duration_ms=%d",
+            cycle_id,
+            user.email,
+            user.id,
+            int((perf_counter() - user_started_at) * 1000),
+        )
         return
 
     # Get new messages since last history ID
     try:
         history_records: list[dict] = []
         next_page_token = None
-        new_history_id = None
         while True:
             history = gmail.history_list(
                 user,
                 user.last_history_id,
                 page_token=next_page_token,
             )
+            history_pages += 1
             page_history_id = history.get("historyId")
             if page_history_id:
                 new_history_id = page_history_id
@@ -126,25 +210,71 @@ def _poll_user(user: User, db: Session) -> None:
             next_page_token = history.get("nextPageToken")
             if not next_page_token:
                 break
+        history_records_count = len(history_records)
+        log.info(
+            "event=history_fetch_completed cycle_id=%s user=%s user_id=%s pages=%d records=%d last_history_id=%s new_history_id=%s",
+            cycle_id,
+            user.email,
+            user.id,
+            history_pages,
+            history_records_count,
+            user.last_history_id,
+            str(new_history_id) if new_history_id else "none",
+        )
     except Exception as exc:
         # 404 means history ID is too old, reset it
         if "404" in str(exc):
             profile = gmail.get_profile(user)
             user.last_history_id = str(profile.get("historyId", ""))
             db.commit()
-            log.warning("History ID expired for user=%s, reset", user.email)
+            log.warning(
+                "event=history_id_expired_reset cycle_id=%s user=%s user_id=%s new_history_id=%s",
+                cycle_id,
+                user.email,
+                user.id,
+                user.last_history_id or "none",
+            )
+            log.info(
+                "event=poll_user_finished cycle_id=%s user=%s user_id=%s new_messages=0 rules_loaded=0 message_processed=0 duration_ms=%d",
+                cycle_id,
+                user.email,
+                user.id,
+                int((perf_counter() - user_started_at) * 1000),
+            )
             return
         raise
 
+    if not history_records:
+        log.info(
+            "event=poll_user_no_history_records cycle_id=%s user=%s user_id=%s",
+            cycle_id,
+            user.email,
+            user.id,
+        )
+
     # Collect new message IDs
-    new_msg_ids: set[str] = set()
     for record in history_records:
         for added in record.get("messagesAdded", []):
             msg = added.get("message", {})
             new_msg_ids.add(msg["id"])
 
+    if not new_msg_ids:
+        log.info(
+            "event=poll_user_no_new_messages cycle_id=%s user=%s user_id=%s history_records=%d",
+            cycle_id,
+            user.email,
+            user.id,
+            history_records_count,
+        )
+
     if new_msg_ids:
-        log.info("Processing %d new messages for user=%s", len(new_msg_ids), user.email)
+        log.info(
+            "event=poll_user_processing_messages cycle_id=%s user=%s user_id=%s new_messages=%d",
+            cycle_id,
+            user.email,
+            user.id,
+            len(new_msg_ids),
+        )
 
         # Load enabled rules ordered by priority
         rules = db.scalars(
@@ -152,6 +282,14 @@ def _poll_user(user: User, db: Session) -> None:
             .where(Rule.user_id == user.id, Rule.enabled == True)  # noqa: E712
             .order_by(Rule.priority.asc(), Rule.created_at.asc())
         ).all()
+        rules_loaded = len(rules)
+        if not rules:
+            log.info(
+                "event=poll_user_no_enabled_rules cycle_id=%s user=%s user_id=%s",
+                cycle_id,
+                user.email,
+                user.id,
+            )
 
         # Load user labels for AI
         user_labels = db.scalars(
@@ -169,6 +307,7 @@ def _poll_user(user: User, db: Session) -> None:
 
         for msg_id in new_msg_ids:
             try:
+                message_processed += 1
                 raw_msg = gmail.get_message(user, msg_id)
                 details = parse_message_details(raw_msg)
 
@@ -189,6 +328,15 @@ def _poll_user(user: User, db: Session) -> None:
                             skip_mark_read=is_unread and rule.action_mark_read,
                         )
                         rule_matched = True
+                        message_rule_applied += 1
+                        log.info(
+                            "event=message_processed cycle_id=%s user=%s user_id=%s msg_id=%s outcome=rule_applied rule_id=%s",
+                            cycle_id,
+                            user.email,
+                            user.id,
+                            msg_id,
+                            rule.id,
+                        )
                         break
 
                 # AI classification for Primary inbox messages only
@@ -202,37 +350,148 @@ def _poll_user(user: User, db: Session) -> None:
                         )
                         if label_id:
                             gmail.modify_message(user, msg_id, add_labels=[label_id])
-                            log.info("AI classified msg=%s with label=%s", msg_id, label_id)
+                            message_ai_labeled += 1
+                            log.info(
+                                "event=message_processed cycle_id=%s user=%s user_id=%s msg_id=%s outcome=ai_labeled label_id=%s",
+                                cycle_id,
+                                user.email,
+                                user.id,
+                                msg_id,
+                                label_id,
+                            )
+                        else:
+                            message_ai_none += 1
+                            log.info(
+                                "event=message_processed cycle_id=%s user=%s user_id=%s msg_id=%s outcome=ai_none",
+                                cycle_id,
+                                user.email,
+                                user.id,
+                                msg_id,
+                            )
+                    else:
+                        message_skipped_non_primary += 1
+                        log.debug(
+                            "event=message_processed cycle_id=%s user=%s user_id=%s msg_id=%s outcome=skipped_non_primary",
+                            cycle_id,
+                            user.email,
+                            user.id,
+                            msg_id,
+                        )
+                elif not rule_matched:
+                    message_no_rule_match += 1
+                    log.info(
+                        "event=message_processed cycle_id=%s user=%s user_id=%s msg_id=%s outcome=no_rule_match",
+                        cycle_id,
+                        user.email,
+                        user.id,
+                        msg_id,
+                    )
 
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == 404:
-                    log.debug("Message %s no longer exists, skipping", msg_id)
+                    message_missing += 1
+                    log.debug(
+                        "event=message_processed cycle_id=%s user=%s user_id=%s msg_id=%s outcome=message_missing status_code=404",
+                        cycle_id,
+                        user.email,
+                        user.id,
+                        msg_id,
+                    )
                 else:
-                    log.error("Failed to process msg=%s: %s", msg_id, exc)
+                    message_error += 1
+                    log.error(
+                        "event=message_processed cycle_id=%s user=%s user_id=%s msg_id=%s outcome=error error=%s",
+                        cycle_id,
+                        user.email,
+                        user.id,
+                        msg_id,
+                        exc,
+                    )
             except Exception as exc:
-                log.error("Failed to process msg=%s: %s", msg_id, exc)
+                message_error += 1
+                log.error(
+                    "event=message_processed cycle_id=%s user=%s user_id=%s msg_id=%s outcome=error error=%s",
+                    cycle_id,
+                    user.email,
+                    user.id,
+                    msg_id,
+                    exc,
+                )
 
     # Run inbox removal sweep for read, classified emails
+    inbox_sweep_removed = 0
+    inbox_sweep_found = 0
     if user.auto_remove_inbox_labeled_read:
-        _run_inbox_removal_sweep(user, gmail, db)
+        inbox_sweep_stats = _run_inbox_removal_sweep(user, gmail, db, cycle_id=cycle_id)
+        inbox_sweep_removed = inbox_sweep_stats["messages_changed"]
+        inbox_sweep_found = inbox_sweep_stats["messages_found"]
+    else:
+        log.info(
+            "event=inbox_removal_sweep_skipped cycle_id=%s user=%s user_id=%s reason=disabled",
+            cycle_id,
+            user.email,
+            user.id,
+        )
 
     # Run retention cleanup
-    _run_retention_cleanup(user, gmail, db)
-    _run_label_retention_cleanup(user, gmail, db)
+    retention_stats = _run_retention_cleanup(user, gmail, db, cycle_id=cycle_id)
+    label_retention_stats = _run_label_retention_cleanup(user, gmail, db, cycle_id=cycle_id)
 
     # Update history ID
     if new_history_id:
         user.last_history_id = str(new_history_id)
         db.commit()
+        log.debug(
+            "event=history_cursor_updated cycle_id=%s user=%s user_id=%s history_id=%s",
+            cycle_id,
+            user.email,
+            user.id,
+            user.last_history_id,
+        )
+
+    log.info(
+        "event=poll_user_finished cycle_id=%s user=%s user_id=%s new_messages=%d rules_loaded=%d message_processed=%d rule_applied=%d ai_labeled=%d ai_none=%d no_rule_match=%d skipped_non_primary=%d message_missing=%d message_error=%d inbox_sweep_found=%d inbox_sweep_removed=%d retention_rules=%d retention_trashed=%d label_retention_rules=%d label_retention_trashed=%d duration_ms=%d",
+        cycle_id,
+        user.email,
+        user.id,
+        len(new_msg_ids),
+        rules_loaded,
+        message_processed,
+        message_rule_applied,
+        message_ai_labeled,
+        message_ai_none,
+        message_no_rule_match,
+        message_skipped_non_primary,
+        message_missing,
+        message_error,
+        inbox_sweep_found,
+        inbox_sweep_removed,
+        retention_stats["rules_configured"],
+        retention_stats["messages_changed"],
+        label_retention_stats["rules_configured"],
+        label_retention_stats["messages_changed"],
+        int((perf_counter() - user_started_at) * 1000),
+    )
 
 
-def _run_inbox_removal_sweep(user: User, gmail: GmailService, db: Session) -> None:
+def _run_inbox_removal_sweep(
+    user: User,
+    gmail: GmailService,
+    db: Session,
+    cycle_id: str = "manual",
+) -> dict[str, int]:
     """Remove INBOX label from read emails that have a user label (including Unclassified)."""
     user_labels = db.scalars(
         select(Label).where(Label.user_id == user.id, Label.label_type == "user")
     ).all()
     if not user_labels:
-        return
+        log.info(
+            "event=inbox_removal_sweep_skipped cycle_id=%s user=%s user_id=%s reason=no_user_labels",
+            cycle_id,
+            user.email,
+            user.id,
+        )
+        return {"pages_scanned": 0, "messages_found": 0, "messages_changed": 0}
 
     label_clauses = " OR ".join(
         f"label:{l.name.replace(' ', '-')}" for l in user_labels
@@ -242,9 +501,13 @@ def _run_inbox_removal_sweep(user: User, gmail: GmailService, db: Session) -> No
     try:
         page_token = None
         total_removed = 0
+        total_found = 0
+        pages_scanned = 0
         while True:
             result = gmail.list_messages(user, query=query, max_results=100, page_token=page_token)
+            pages_scanned += 1
             messages = result.get("messages", [])
+            total_found += len(messages)
             if not messages:
                 break
             msg_ids = [m["id"] for m in messages]
@@ -253,24 +516,58 @@ def _run_inbox_removal_sweep(user: User, gmail: GmailService, db: Session) -> No
             page_token = result.get("nextPageToken")
             if not page_token:
                 break
-        if total_removed:
-            log.info(
-                "Inbox removal sweep: removed INBOX from %d read messages for user=%s",
-                total_removed, user.email,
-            )
+        log.info(
+            "event=inbox_removal_sweep_completed cycle_id=%s user=%s user_id=%s pages_scanned=%d messages_found=%d messages_changed=%d query=%s",
+            cycle_id,
+            user.email,
+            user.id,
+            pages_scanned,
+            total_found,
+            total_removed,
+            query,
+        )
+        return {
+            "pages_scanned": pages_scanned,
+            "messages_found": total_found,
+            "messages_changed": total_removed,
+        }
     except Exception as exc:
-        log.error("Inbox removal sweep failed for user=%s: %s", user.email, exc)
+        log.error(
+            "event=inbox_removal_sweep_failed cycle_id=%s user=%s user_id=%s query=%s error=%s",
+            cycle_id,
+            user.email,
+            user.id,
+            query,
+            exc,
+        )
+        return {"pages_scanned": 0, "messages_found": 0, "messages_changed": 0}
 
 
-def _run_retention_cleanup(user: User, gmail: GmailService, db: Session) -> None:
+def _run_retention_cleanup(
+    user: User,
+    gmail: GmailService,
+    db: Session,
+    cycle_id: str = "manual",
+) -> dict[str, int]:
     retentions = db.scalars(
         select(SystemLabelRetention).where(
             SystemLabelRetention.user_id == user.id,
             SystemLabelRetention.enabled == True,  # noqa: E712
         )
     ).all()
+    if not retentions:
+        log.info(
+            "event=retention_cleanup_skipped cycle_id=%s user=%s user_id=%s reason=no_system_retentions",
+            cycle_id,
+            user.email,
+            user.id,
+        )
+        return {"rules_configured": 0, "rules_run": 0, "messages_changed": 0}
 
+    rules_run = 0
+    total_trashed_all = 0
     for retention in retentions:
+        rules_run += 1
         cutoff = datetime.now(timezone.utc) - timedelta(days=retention.retention_days)
         cutoff_str = cutoff.strftime("%Y/%m/%d")
         query = f"label:{retention.category} before:{cutoff_str} -has:userlabels"
@@ -278,6 +575,8 @@ def _run_retention_cleanup(user: User, gmail: GmailService, db: Session) -> None
         try:
             page_token = None
             total_trashed = 0
+            total_found = 0
+            pages_scanned = 0
             while True:
                 result = gmail.list_messages(
                     user,
@@ -285,7 +584,9 @@ def _run_retention_cleanup(user: User, gmail: GmailService, db: Session) -> None
                     max_results=100,
                     page_token=page_token,
                 )
+                pages_scanned += 1
                 messages = result.get("messages", [])
+                total_found += len(messages)
                 if not messages:
                     break
                 msg_ids = [m["id"] for m in messages]
@@ -294,16 +595,43 @@ def _run_retention_cleanup(user: User, gmail: GmailService, db: Session) -> None
                 page_token = result.get("nextPageToken")
                 if not page_token:
                     break
-            if total_trashed:
-                log.info(
-                    "Retention cleanup: trashed %d %s messages older than %d days for user=%s",
-                    total_trashed, retention.category, retention.retention_days, user.email,
-                )
+            total_trashed_all += total_trashed
+            log.info(
+                "event=retention_cleanup_completed cycle_id=%s user=%s user_id=%s category=%s retention_days=%d pages_scanned=%d messages_found=%d messages_changed=%d query=%s",
+                cycle_id,
+                user.email,
+                user.id,
+                retention.category,
+                retention.retention_days,
+                pages_scanned,
+                total_found,
+                total_trashed,
+                query,
+            )
         except Exception as exc:
-            log.error("Retention cleanup failed for %s: %s", retention.category, exc)
+            log.error(
+                "event=retention_cleanup_failed cycle_id=%s user=%s user_id=%s category=%s query=%s error=%s",
+                cycle_id,
+                user.email,
+                user.id,
+                retention.category,
+                query,
+                exc,
+            )
+
+    return {
+        "rules_configured": len(retentions),
+        "rules_run": rules_run,
+        "messages_changed": total_trashed_all,
+    }
 
 
-def _run_label_retention_cleanup(user: User, gmail: GmailService, db: Session) -> None:
+def _run_label_retention_cleanup(
+    user: User,
+    gmail: GmailService,
+    db: Session,
+    cycle_id: str = "manual",
+) -> dict[str, int]:
     """Trash emails with user labels that have retention_days set and are past the cutoff."""
     labels_with_retention = db.scalars(
         select(Label).where(
@@ -312,8 +640,19 @@ def _run_label_retention_cleanup(user: User, gmail: GmailService, db: Session) -
             Label.retention_days.isnot(None),
         )
     ).all()
+    if not labels_with_retention:
+        log.info(
+            "event=label_retention_cleanup_skipped cycle_id=%s user=%s user_id=%s reason=no_label_retentions",
+            cycle_id,
+            user.email,
+            user.id,
+        )
+        return {"rules_configured": 0, "rules_run": 0, "messages_changed": 0}
 
+    rules_run = 0
+    total_trashed_all = 0
     for label in labels_with_retention:
+        rules_run += 1
         cutoff = datetime.now(timezone.utc) - timedelta(days=label.retention_days)
         cutoff_str = cutoff.strftime("%Y/%m/%d")
         label_term = label.name.replace(" ", "-")
@@ -322,6 +661,8 @@ def _run_label_retention_cleanup(user: User, gmail: GmailService, db: Session) -
         try:
             page_token = None
             total_trashed = 0
+            total_found = 0
+            pages_scanned = 0
             while True:
                 result = gmail.list_messages(
                     user,
@@ -329,7 +670,9 @@ def _run_label_retention_cleanup(user: User, gmail: GmailService, db: Session) -
                     max_results=100,
                     page_token=page_token,
                 )
+                pages_scanned += 1
                 messages = result.get("messages", [])
+                total_found += len(messages)
                 if not messages:
                     break
                 msg_ids = [m["id"] for m in messages]
@@ -338,10 +681,32 @@ def _run_label_retention_cleanup(user: User, gmail: GmailService, db: Session) -
                 page_token = result.get("nextPageToken")
                 if not page_token:
                     break
-            if total_trashed:
-                log.info(
-                    "Label retention cleanup: trashed %d '%s' messages older than %d days for user=%s",
-                    total_trashed, label.name, label.retention_days, user.email,
-                )
+            total_trashed_all += total_trashed
+            log.info(
+                "event=label_retention_cleanup_completed cycle_id=%s user=%s user_id=%s label=%s retention_days=%d pages_scanned=%d messages_found=%d messages_changed=%d query=%s",
+                cycle_id,
+                user.email,
+                user.id,
+                label.name,
+                label.retention_days,
+                pages_scanned,
+                total_found,
+                total_trashed,
+                query,
+            )
         except Exception as exc:
-            log.error("Label retention cleanup failed for '%s': %s", label.name, exc)
+            log.error(
+                "event=label_retention_cleanup_failed cycle_id=%s user=%s user_id=%s label=%s query=%s error=%s",
+                cycle_id,
+                user.email,
+                user.id,
+                label.name,
+                query,
+                exc,
+            )
+
+    return {
+        "rules_configured": len(labels_with_retention),
+        "rules_run": rules_run,
+        "messages_changed": total_trashed_all,
+    }

@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 import httpx
+import logging
 from fastapi import Response
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -144,6 +145,60 @@ def test_poller_disables_polling_on_gmail_401(monkeypatch) -> None:
     assert user_id not in poller._last_poll_per_user
 
 
+def test_poll_cycle_logs_when_no_eligible_users(monkeypatch, caplog) -> None:
+    db = _make_db()
+
+    def _fake_session_local() -> Session:
+        return db
+
+    monkeypatch.setattr(poller, "SessionLocal", _fake_session_local)
+    poller._last_poll_per_user.clear()
+    caplog.clear()
+    caplog.set_level(logging.INFO, logger="poller")
+
+    poller._run_poll_cycle()
+
+    messages = [record.getMessage() for record in caplog.records if record.name == "poller"]
+    assert any("event=poll_cycle_no_eligible_users" in msg for msg in messages)
+    assert any(
+        "event=poll_cycle_finished" in msg and "eligible_users=0" in msg and "processed_users=0" in msg
+        for msg in messages
+    )
+
+
+def test_poll_cycle_logs_user_skipped_by_interval(monkeypatch, caplog) -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=5,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    def _fake_session_local() -> Session:
+        return db
+
+    monkeypatch.setattr(poller, "SessionLocal", _fake_session_local)
+    poller._last_poll_per_user.clear()
+    poller._last_poll_per_user[user.id] = datetime.now(timezone.utc)
+    caplog.clear()
+    caplog.set_level(logging.INFO, logger="poller")
+
+    poller._run_poll_cycle()
+
+    messages = [record.getMessage() for record in caplog.records if record.name == "poller"]
+    assert any("event=poll_user_skipped_interval" in msg for msg in messages)
+    assert any(
+        "event=poll_cycle_finished" in msg and "skipped_interval_users=1" in msg and "processed_users=0" in msg
+        for msg in messages
+    )
+
+
 def test_poller_skips_disconnected_user_rows(monkeypatch) -> None:
     db = _make_db()
     disconnected = User(
@@ -182,6 +237,49 @@ def test_poller_skips_disconnected_user_rows(monkeypatch) -> None:
     poller._run_poll_cycle()
 
     assert called_user_ids == [connected.id]
+
+
+def test_poll_user_logs_noop_history_and_messages(monkeypatch, caplog) -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+        last_history_id="100",
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    class _FakeGmailService:
+        def __init__(self, _db: Session) -> None:
+            pass
+
+        def history_list(
+            self,
+            _user: User,
+            start_history_id: str,
+            page_token: str | None = None,
+            max_results: int | None = None,
+        ) -> dict:
+            assert start_history_id == "100"
+            assert page_token is None
+            assert max_results is None
+            return {"historyId": "101", "history": []}
+
+    monkeypatch.setattr(poller, "GmailService", _FakeGmailService)
+    caplog.clear()
+    caplog.set_level(logging.INFO, logger="poller")
+
+    poller._poll_user(user, db, cycle_id="test-cycle")
+
+    messages = [record.getMessage() for record in caplog.records if record.name == "poller"]
+    assert any("event=poll_user_no_history_records" in msg for msg in messages)
+    assert any("event=poll_user_no_new_messages" in msg for msg in messages)
+    assert any("event=poll_user_finished" in msg and "new_messages=0" in msg for msg in messages)
 
 
 def test_poller_history_paginates_before_cursor_update(monkeypatch) -> None:
@@ -430,6 +528,76 @@ def test_retention_cleanup_paginates_all_pages() -> None:
 
     assert gmail.list_calls == [None, "page-2"]
     assert gmail.trashed_batches == [["m-1", "m-2"], ["m-3"]]
+
+
+def test_retention_cleanup_logs_zero_work(caplog) -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+    )
+    retention = SystemLabelRetention(
+        user_id=1,
+        category="promotions",
+        retention_days=7,
+        enabled=True,
+    )
+    db.add(user)
+    db.commit()
+    retention.user_id = user.id
+    db.add(retention)
+    db.commit()
+
+    class _FakeGmailService:
+        def list_messages(
+            self,
+            _user: User,
+            query: str = "",
+            max_results: int = 100,
+            page_token: str | None = None,
+        ) -> dict:
+            assert "label:promotions" in query
+            return {"messages": []}
+
+        def batch_trash_messages(self, _user: User, msg_ids: list[str]) -> None:
+            raise AssertionError(f"should not trash messages, got {msg_ids}")
+
+    caplog.clear()
+    caplog.set_level(logging.INFO, logger="poller")
+    poller._run_retention_cleanup(user, _FakeGmailService(), db, cycle_id="test-cycle")
+
+    messages = [record.getMessage() for record in caplog.records if record.name == "poller"]
+    assert any("event=retention_cleanup_completed" in msg and "messages_changed=0" in msg for msg in messages)
+
+
+def test_inbox_sweep_logs_skip_when_no_user_labels(caplog) -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    class _FakeGmailService:
+        pass
+
+    caplog.clear()
+    caplog.set_level(logging.INFO, logger="poller")
+    stats = poller._run_inbox_removal_sweep(user, _FakeGmailService(), db, cycle_id="test-cycle")
+
+    messages = [record.getMessage() for record in caplog.records if record.name == "poller"]
+    assert stats["messages_changed"] == 0
+    assert any("event=inbox_removal_sweep_skipped" in msg and "reason=no_user_labels" in msg for msg in messages)
 
 
 def test_retention_cleanup_uses_userlabels_filter() -> None:
