@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Status, updateSettings, disconnectGoogle, fetchRetention, updateRetention, RetentionItem } from "../lib/api";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 type Props = {
   status: Status;
@@ -20,6 +21,8 @@ export function SettingsPage({ status, onStatusChange }: Props) {
   const [retentionLoading, setRetentionLoading] = useState(true);
   const [retentionSaving, setRetentionSaving] = useState(false);
   const [retentionSaved, setRetentionSaved] = useState(false);
+  const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
 
   useEffect(() => {
     fetchRetention()
@@ -68,12 +71,19 @@ export function SettingsPage({ status, onStatusChange }: Props) {
     ));
   };
 
-  const handleDisconnect = async () => {
-    if (!confirm("Disconnect your Google account? You will be logged out.")) return;
+  const handleDisconnectClick = () => {
+    setShowDisconnectConfirm(true);
+  };
+
+  const handleDisconnectConfirm = async () => {
+    setDisconnecting(true);
     try {
       await disconnectGoogle();
+      setShowDisconnectConfirm(false);
       onStatusChange(null);
-    } catch {}
+    } catch {} finally {
+      setDisconnecting(false);
+    }
   };
 
   return (
@@ -238,12 +248,23 @@ export function SettingsPage({ status, onStatusChange }: Props) {
           Disconnect your Google account. This will clear your tokens and log you out.
         </p>
         <button
-          onClick={handleDisconnect}
+          onClick={handleDisconnectClick}
           className="px-4 py-2 text-sm font-medium rounded-lg border border-red-300 text-red-700 hover:bg-red-50 transition-colors"
         >
           Disconnect Google Account
         </button>
       </div>
+
+      <ConfirmDialog
+        open={showDisconnectConfirm}
+        title="Disconnect account"
+        message="Disconnect your Google account? You will be logged out."
+        confirmLabel="Disconnect"
+        variant="danger"
+        loading={disconnecting}
+        onConfirm={handleDisconnectConfirm}
+        onCancel={() => setShowDisconnectConfirm(false)}
+      />
     </div>
   );
 }

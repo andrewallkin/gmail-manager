@@ -4,6 +4,7 @@ import {
   fetchRules, fetchLabels, createRule, updateRule, deleteRule, runRule,
   reorderRules, previewRule,
 } from "../lib/api";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 const emptyRule: RuleCreate = {
   name: "",
@@ -18,7 +19,7 @@ const emptyRule: RuleCreate = {
   action_archive: false,
   action_delete: false,
   action_mark_read: false,
-  scope: "primary",
+  scope: "all_inbox",
 };
 
 function relativeTime(dateStr: string | null): string {
@@ -55,6 +56,22 @@ function GripIcon() {
       <circle cx="15" cy="12" r="1.5" />
       <circle cx="9" cy="19" r="1.5" />
       <circle cx="15" cy="19" r="1.5" />
+    </svg>
+  );
+}
+
+function ChevronUpIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+    </svg>
+  );
+}
+
+function ChevronDownIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
     </svg>
   );
 }
@@ -101,8 +118,11 @@ export function RulesPage() {
   const [runResult, setRunResult] = useState<string | null>(null);
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [previewing, setPreviewing] = useState(false);
+  const [confirmDeleteRule, setConfirmDeleteRule] = useState<RuleItem | null>(null);
+  const [deletingRule, setDeletingRule] = useState(false);
   const dragItem = useRef<number | null>(null);
-  const dragOver = useRef<number | null>(null);
+  const [dragOver, setDragOver] = useState<number | null>(null);
+  const runResultTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -113,6 +133,27 @@ export function RulesPage() {
   };
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (!runResult) return;
+    runResultTimeoutRef.current = setTimeout(() => {
+      setRunResult(null);
+    }, 5000);
+    return () => {
+      if (runResultTimeoutRef.current) {
+        clearTimeout(runResultTimeoutRef.current);
+      }
+    };
+  }, [runResult]);
+
+  useEffect(() => {
+    if (!showForm) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeForm();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [showForm]);
 
   const userLabels = labels
     .filter((l) => l.label_type === "user")
@@ -168,12 +209,20 @@ export function RulesPage() {
     } catch {} finally { setSaving(false); }
   };
 
-  const handleDelete = async (rule: RuleItem) => {
-    if (!confirm(`Delete rule "${rule.name}"?`)) return;
+  const handleDeleteClick = (rule: RuleItem) => {
+    setConfirmDeleteRule(rule);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!confirmDeleteRule) return;
+    setDeletingRule(true);
     try {
-      await deleteRule(rule.id);
+      await deleteRule(confirmDeleteRule.id);
+      setConfirmDeleteRule(null);
       load();
-    } catch {}
+    } catch {} finally {
+      setDeletingRule(false);
+    }
   };
 
   const handleRun = async (rule: RuleItem) => {
@@ -215,20 +264,50 @@ export function RulesPage() {
 
   const handleDragOver = (e: React.DragEvent, idx: number) => {
     e.preventDefault();
-    dragOver.current = idx;
+    setDragOver(idx);
+  };
+
+  const handleDragEnd = () => {
+    dragItem.current = null;
+    setDragOver(null);
   };
 
   const handleDrop = async () => {
-    if (dragItem.current === null || dragOver.current === null || dragItem.current === dragOver.current) return;
+    if (dragItem.current === null || dragOver === null || dragItem.current === dragOver) return;
     const reordered = [...rules];
     const [dragged] = reordered.splice(dragItem.current, 1);
-    reordered.splice(dragOver.current, 0, dragged);
+    reordered.splice(dragOver, 0, dragged);
     setRules(reordered);
     dragItem.current = null;
-    dragOver.current = null;
+    setDragOver(null);
     try {
       await reorderRules(reordered.map(r => r.id));
     } catch {}
+  };
+
+  const handleMoveUp = async (idx: number) => {
+    if (idx <= 0) return;
+    const reordered = [...rules];
+    [reordered[idx - 1], reordered[idx]] = [reordered[idx], reordered[idx - 1]];
+    setRules(reordered);
+    try {
+      await reorderRules(reordered.map(r => r.id));
+    } catch {}
+  };
+
+  const handleMoveDown = async (idx: number) => {
+    if (idx >= rules.length - 1) return;
+    const reordered = [...rules];
+    [reordered[idx], reordered[idx + 1]] = [reordered[idx + 1], reordered[idx]];
+    setRules(reordered);
+    try {
+      await reorderRules(reordered.map(r => r.id));
+    } catch {}
+  };
+
+  const closeForm = () => {
+    setShowForm(false);
+    setPreview(null);
   };
 
   if (loading) {
@@ -239,9 +318,16 @@ export function RulesPage() {
     );
   }
 
-  const formPanel = showForm && (
-    <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
-      <h2 className="text-lg font-semibold text-gray-900">
+  const formModal = showForm && (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+      onClick={closeForm}
+    >
+      <div
+        className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 space-y-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="text-lg font-semibold text-gray-900">
         {editingId ? "Edit Rule" : "Create Rule"}
       </h2>
 
@@ -440,13 +526,14 @@ export function RulesPage() {
           {previewing ? "Checking..." : "Preview"}
         </button>
         <button
-          onClick={() => { setShowForm(false); setPreview(null); }}
+          onClick={closeForm}
           className="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 transition-colors"
         >
           Cancel
         </button>
       </div>
     </div>
+  </div>
   );
 
   return (
@@ -462,35 +549,64 @@ export function RulesPage() {
       </div>
 
       {runResult && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-sm text-blue-700 flex justify-between items-start gap-4">
+        <div
+          className={`rounded-lg px-4 py-3 text-sm flex justify-between items-start gap-4 ${
+            runResult.startsWith("Failed")
+              ? "bg-red-50 border border-red-200 text-red-700"
+              : "bg-blue-50 border border-blue-200 text-blue-700"
+          }`}
+        >
           <div className="min-w-0 flex-1">
             <div>{runResult.split("\n")[0]}</div>
             {runResult.includes("\n") && (
-              <div className="mt-1 text-xs text-blue-600 font-mono truncate" title={runResult.split("\n").slice(1).join(" ")}>
+              <div className={`mt-1 text-xs font-mono truncate ${runResult.startsWith("Failed") ? "text-red-600" : "text-blue-600"}`} title={runResult.split("\n").slice(1).join(" ")}>
                 {runResult.split("\n").slice(1).join(" ")}
               </div>
             )}
           </div>
-          <button onClick={() => setRunResult(null)} className="text-blue-500 hover:text-blue-700 flex-shrink-0">&times;</button>
+          <button onClick={() => setRunResult(null)} className={runResult.startsWith("Failed") ? "text-red-500 hover:text-red-700 flex-shrink-0" : "text-blue-500 hover:text-blue-700 flex-shrink-0"}>&times;</button>
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="space-y-4">
-          {rules.map((rule, idx) => (
-            <div
-              key={rule.id}
-              draggable
-              onDragStart={() => handleDragStart(idx)}
-              onDragOver={(e) => handleDragOver(e, idx)}
-              onDrop={handleDrop}
-              className="bg-white rounded-xl border border-gray-200 p-6 cursor-grab active:cursor-grabbing"
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex items-start gap-2 flex-1 min-w-0">
-                  <div className="pt-1 flex-shrink-0">
+      {formModal}
+
+      <ConfirmDialog
+        open={!!confirmDeleteRule}
+        title="Delete rule"
+        message={confirmDeleteRule ? `Delete rule "${confirmDeleteRule.name}"?` : ""}
+        variant="danger"
+        loading={deletingRule}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setConfirmDeleteRule(null)}
+      />
+
+      <div className="max-w-4xl space-y-4">
+        <div className="mb-2">
+          <h2 className="text-lg font-semibold text-gray-900">Rules (priority order)</h2>
+          <p className="text-sm text-gray-500">Top rules run first. Drag to reorder.</p>
+        </div>
+        {rules.map((rule, idx) => (
+          <div
+            key={rule.id}
+            onDragOver={(e) => handleDragOver(e, idx)}
+            onDrop={handleDrop}
+            onDragEnd={handleDragEnd}
+            className={`bg-white rounded-xl border border-gray-200 p-6 transition-colors ${
+              dragOver === idx ? "ring-2 ring-blue-400 bg-blue-50/50" : ""
+            }`}
+          >
+            <div className="flex items-start justify-between">
+              <div className="flex items-start gap-3 flex-1 min-w-0">
+                <div className="flex flex-col items-center gap-0.5 flex-shrink-0">
+                  <span className="text-xs font-medium text-gray-500">#{idx + 1}</span>
+                  <div
+                    draggable
+                    onDragStart={() => handleDragStart(idx)}
+                    className="pt-1 cursor-grab active:cursor-grabbing touch-none"
+                  >
                     <GripIcon />
                   </div>
+                </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${rule.enabled ? "bg-green-500" : "bg-gray-300"}`} />
@@ -527,7 +643,25 @@ export function RulesPage() {
                     )}
                   </div>
                 </div>
-                <div className="flex gap-2 ml-4 flex-shrink-0">
+                <div className="flex items-center gap-2 ml-4 flex-shrink-0">
+                  <div className="flex flex-col gap-0.5">
+                    <button
+                      onClick={() => handleMoveUp(idx)}
+                      disabled={idx === 0}
+                      className="p-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      title="Move up"
+                    >
+                      <ChevronUpIcon />
+                    </button>
+                    <button
+                      onClick={() => handleMoveDown(idx)}
+                      disabled={idx === rules.length - 1}
+                      className="p-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      title="Move down"
+                    >
+                      <ChevronDownIcon />
+                    </button>
+                  </div>
                   <button
                     onClick={() => handleRun(rule)}
                     disabled={runningId === rule.id}
@@ -542,7 +676,7 @@ export function RulesPage() {
                     Edit
                   </button>
                   <button
-                    onClick={() => handleDelete(rule)}
+                    onClick={() => handleDeleteClick(rule)}
                     className="px-3 py-1.5 text-xs font-medium rounded-md border border-red-300 text-red-700 hover:bg-red-50 transition-colors"
                   >
                     Delete
@@ -550,17 +684,12 @@ export function RulesPage() {
                 </div>
               </div>
             </div>
-          ))}
-          {rules.length === 0 && !showForm && (
-            <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-500">
-              No rules yet. Click "Create Rule" to get started.
-            </div>
-          )}
-        </div>
-
-        <div>
-          {formPanel}
-        </div>
+        ))}
+        {rules.length === 0 && !showForm && (
+          <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-500">
+            No rules yet. Click "Create Rule" to get started.
+          </div>
+        )}
       </div>
     </div>
   );

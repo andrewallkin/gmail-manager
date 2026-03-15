@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { LabelItem, fetchLabels, syncLabels, createLabel, updateLabel, deleteLabel } from "../lib/api";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 const GMAIL_LABEL_COLORS = [
   { bg: "#000000", text: "#ffffff" },
@@ -45,6 +46,8 @@ export function LabelsPage() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [typeFilter, setTypeFilter] = useState<"all" | "user" | "system">("user");
   const [typeSortDirection, setTypeSortDirection] = useState<"asc" | "desc" | null>(null);
+  const [confirmDeleteLabel, setConfirmDeleteLabel] = useState<LabelItem | null>(null);
+  const [deletingLabel, setDeletingLabel] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -77,12 +80,20 @@ export function LabelsPage() {
     } catch {} finally { setCreating(false); }
   };
 
-  const handleDelete = async (label: LabelItem) => {
-    if (!confirm(`Delete label "${label.name}"? This will also remove it from Gmail.`)) return;
+  const handleDeleteClick = (label: LabelItem) => {
+    setConfirmDeleteLabel(label);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!confirmDeleteLabel) return;
+    setDeletingLabel(true);
     try {
-      await deleteLabel(label.id);
+      await deleteLabel(confirmDeleteLabel.id);
+      setConfirmDeleteLabel(null);
       load();
-    } catch {}
+    } catch {} finally {
+      setDeletingLabel(false);
+    }
   };
 
   const startEdit = (label: LabelItem) => {
@@ -317,7 +328,7 @@ export function LabelsPage() {
                         Edit
                       </button>
                       <button
-                        onClick={() => handleDelete(label)}
+                        onClick={() => handleDeleteClick(label)}
                         className="text-red-600 hover:text-red-800 text-xs font-medium"
                       >
                         Delete
@@ -337,6 +348,20 @@ export function LabelsPage() {
           </tbody>
         </table>
       </div>
+
+      <ConfirmDialog
+        open={!!confirmDeleteLabel}
+        title="Delete label"
+        message={
+          confirmDeleteLabel
+            ? `Delete label "${confirmDeleteLabel.name}"? This will also remove it from Gmail.`
+            : ""
+        }
+        variant="danger"
+        loading={deletingLabel}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setConfirmDeleteLabel(null)}
+      />
     </div>
   );
 }
