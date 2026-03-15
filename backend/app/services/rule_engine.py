@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Label, Rule, User
 from app.services.gmail_service import GmailService
+from app.services.query_utils import build_or_term, split_comma_values
 
 log = logging.getLogger("rules")
 
@@ -27,11 +28,11 @@ def build_rule_query(rule: Rule, db: Session, exclude_action_label: bool = False
     query_parts: list[str] = []
 
     if rule.match_from:
-        query_parts.append(f"from:{rule.match_from}")
+        query_parts.append(build_or_term("from", rule.match_from))
     if rule.match_to:
-        query_parts.append(f"to:{rule.match_to}")
+        query_parts.append(build_or_term("to", rule.match_to))
     if rule.match_subject:
-        query_parts.append(f"subject:{rule.match_subject}")
+        query_parts.append(build_or_term("subject", rule.match_subject))
     if rule.match_has_words:
         query_parts.append(rule.match_has_words)
     if rule.match_doesnt_have:
@@ -107,10 +108,14 @@ def message_matches_rule(rule: Rule, details: dict, db: Session) -> bool:
     body = details.get("body", "").lower()
     label_ids = details.get("label_ids", [])
 
-    if rule.match_from and rule.match_from.lower() not in sender:
-        return False
-    if rule.match_subject and rule.match_subject.lower() not in subject:
-        return False
+    if rule.match_from:
+        values = split_comma_values(rule.match_from)
+        if not any(v.lower() in sender for v in values):
+            return False
+    if rule.match_subject:
+        values = split_comma_values(rule.match_subject)
+        if not any(v.lower() in subject for v in values):
+            return False
     if rule.match_has_words:
         words = rule.match_has_words.lower()
         if words not in subject and words not in body:

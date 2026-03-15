@@ -193,6 +193,29 @@ class GmailService:
         for msg_id in msg_ids:
             self.trash_message(user, msg_id)
 
+    def get_message_metadata(self, user: User, msg_id: str) -> dict:
+        """Fetch message with metadata format, returning sender/subject/date."""
+        resp = httpx.get(
+            f"{GMAIL_API_BASE}/messages/{msg_id}",
+            headers=self._headers(user),
+            params={
+                "format": "metadata",
+                "metadataHeaders": ["From", "Subject", "Date"],
+            },
+            timeout=20,
+        )
+        resp.raise_for_status()
+        raw = resp.json()
+        headers = {}
+        for h in raw.get("payload", {}).get("headers", []):
+            headers[h["name"].lower()] = h["value"]
+        return {
+            "message_id": msg_id,
+            "sender": headers.get("from", ""),
+            "subject": headers.get("subject", ""),
+            "date": headers.get("date", ""),
+        }
+
     def get_message(self, user: User, msg_id: str, fmt: str = "full") -> dict:
         resp = httpx.get(
             f"{GMAIL_API_BASE}/messages/{msg_id}",

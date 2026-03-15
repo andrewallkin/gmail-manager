@@ -85,6 +85,8 @@ export type RuleCreate = {
 export type CleanupItem = {
   id: number;
   label_filter: string | null;
+  sender_filter: string | null;
+  subject_filter: string | null;
   date_from: string | null;
   date_to: string | null;
   action: string;
@@ -93,6 +95,18 @@ export type CleanupItem = {
   processed_messages: number;
   created_at: string;
   completed_at: string | null;
+};
+
+export type PreviewMessageSummary = {
+  message_id: string;
+  sender: string;
+  subject: string;
+  date: string;
+};
+
+export type CleanupPreviewResult = {
+  total_count: number;
+  messages: PreviewMessageSummary[];
 };
 
 export type SettingsUpdate = {
@@ -278,6 +292,8 @@ export async function previewRule(rule: RuleCreate): Promise<PreviewResult> {
 
 export async function startCleanup(body: {
   label_filter?: string;
+  sender_filter?: string;
+  subject_filter?: string;
   date_from?: string;
   date_to?: string;
   action: string;
@@ -291,9 +307,11 @@ export async function fetchCleanups(): Promise<CleanupItem[]> {
 
 export async function previewCleanup(body: {
   label_filter?: string;
+  sender_filter?: string;
+  subject_filter?: string;
   date_from?: string;
   date_to?: string;
-}): Promise<{ estimated_count: number }> {
+}): Promise<CleanupPreviewResult> {
   return postJson("/cleanup/preview", body);
 }
 

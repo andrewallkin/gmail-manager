@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
-import { CleanupItem, fetchCleanups, startCleanup, previewCleanup } from "../lib/api";
+import {
+  CleanupItem, CleanupPreviewResult, PreviewMessageSummary,
+  fetchCleanups, startCleanup, previewCleanup,
+} from "../lib/api";
 import { formatCleanupDateRange } from "../lib/format";
 
 export function CleanupPage() {
@@ -7,10 +10,13 @@ export function CleanupPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [labelFilter, setLabelFilter] = useState("");
+  const [senderFilter, setSenderFilter] = useState("");
+  const [subjectFilter, setSubjectFilter] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [action, setAction] = useState("delete");
-  const [previewCount, setPreviewCount] = useState<number | null>(null);
+  const [previewTotal, setPreviewTotal] = useState<number | null>(null);
+  const [previewMessages, setPreviewMessages] = useState<PreviewMessageSummary[]>([]);
   const [previewing, setPreviewing] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [successResult, setSuccessResult] = useState<CleanupItem | null>(null);
@@ -27,7 +33,8 @@ export function CleanupPage() {
 
   const clearSuccessAndPreview = () => {
     setSuccessResult(null);
-    setPreviewCount(null);
+    setPreviewTotal(null);
+    setPreviewMessages([]);
     setShowConfirm(false);
   };
 
@@ -35,12 +42,15 @@ export function CleanupPage() {
     setPreviewing(true);
     setSuccessResult(null);
     try {
-      const result = await previewCleanup({
+      const result: CleanupPreviewResult = await previewCleanup({
         label_filter: labelFilter || undefined,
+        sender_filter: senderFilter || undefined,
+        subject_filter: subjectFilter || undefined,
         date_from: dateFrom || undefined,
         date_to: dateTo || undefined,
       });
-      setPreviewCount(result.estimated_count);
+      setPreviewTotal(result.total_count);
+      setPreviewMessages(result.messages);
       setShowConfirm(true);
     } catch {} finally { setPreviewing(false); }
   };
@@ -51,15 +61,20 @@ export function CleanupPage() {
     try {
       const result = await startCleanup({
         label_filter: labelFilter || undefined,
+        sender_filter: senderFilter || undefined,
+        subject_filter: subjectFilter || undefined,
         date_from: dateFrom || undefined,
         date_to: dateTo || undefined,
         action,
       });
       setSuccessResult(result);
       setLabelFilter("");
+      setSenderFilter("");
+      setSubjectFilter("");
       setDateFrom("");
       setDateTo("");
-      setPreviewCount(null);
+      setPreviewTotal(null);
+      setPreviewMessages([]);
       load();
     } catch {} finally { setSubmitting(false); }
   };
@@ -72,6 +87,28 @@ export function CleanupPage() {
         <h2 className="text-lg font-semibold text-gray-900">Bulk Cleanup</h2>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Sender Filter</label>
+            <input
+              type="text"
+              value={senderFilter}
+              onChange={(e) => { setSenderFilter(e.target.value); clearSuccessAndPreview(); }}
+              placeholder="e.g., newsletter@example.com, noreply@example.com"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="text-xs text-gray-400 mt-1">Separate multiple values with commas (OR logic)</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Subject Filter</label>
+            <input
+              type="text"
+              value={subjectFilter}
+              onChange={(e) => { setSubjectFilter(e.target.value); clearSuccessAndPreview(); }}
+              placeholder="e.g., Weekly digest, Monthly report"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="text-xs text-gray-400 mt-1">Separate multiple values with commas (OR logic)</p>
+          </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Label Filter</label>
             <input
@@ -131,15 +168,45 @@ export function CleanupPage() {
           </button>
         </div>
 
-        {showConfirm && previewCount !== null && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm">
-            <span className="font-medium text-yellow-800">
-              {action === "delete" ? "Delete" : action === "archive" ? "Archive" : "Mark as read"} {previewCount} messages
-            </span>
-            {dateFrom && dateTo && (
-              <span className="text-yellow-700"> between {dateFrom} and {dateTo}</span>
+        {showConfirm && previewTotal !== null && (
+          <div className="space-y-3">
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm">
+              <span className="font-medium text-yellow-800">
+                {previewTotal} message{previewTotal !== 1 ? "s" : ""} match your criteria
+              </span>
+              {previewTotal > 500 && (
+                <span className="text-yellow-700"> (showing first 500)</span>
+              )}
+              <span className="text-yellow-700">
+                . Click "Start Cleanup" to{" "}
+                {action === "delete" ? "delete" : action === "archive" ? "archive" : "mark as read"} them.
+              </span>
+            </div>
+
+            {previewMessages.length > 0 && (
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="max-h-96 overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
+                      <tr>
+                        <th className="text-left px-4 py-2 font-medium text-gray-500">Sender</th>
+                        <th className="text-left px-4 py-2 font-medium text-gray-500">Subject</th>
+                        <th className="text-left px-4 py-2 font-medium text-gray-500">Date</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {previewMessages.map((msg) => (
+                        <tr key={msg.message_id} className="hover:bg-gray-50">
+                          <td className="px-4 py-2 text-gray-700 truncate max-w-[200px]" title={msg.sender}>{msg.sender}</td>
+                          <td className="px-4 py-2 text-gray-700 truncate max-w-[300px]" title={msg.subject}>{msg.subject}</td>
+                          <td className="px-4 py-2 text-gray-500 whitespace-nowrap">{msg.date}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             )}
-            <span className="text-yellow-700">? Click "Start Cleanup" to proceed.</span>
           </div>
         )}
 
@@ -154,8 +221,10 @@ export function CleanupPage() {
                   : "marked as read"}{" "}
               {successResult.processed_messages} messages.
             </div>
-            {(successResult.label_filter || successResult.date_from || successResult.date_to) && (
+            {(successResult.label_filter || successResult.sender_filter || successResult.subject_filter || successResult.date_from || successResult.date_to) && (
               <div className="mt-1 text-green-700">
+                {successResult.sender_filter && <span>Sender: {successResult.sender_filter}. </span>}
+                {successResult.subject_filter && <span>Subject: {successResult.subject_filter}. </span>}
                 {successResult.label_filter && <span>Label: {successResult.label_filter}. </span>}
                 {(successResult.date_from || successResult.date_to) && (
                   <span>Date range: {formatCleanupDateRange(successResult.date_from, successResult.date_to)}.</span>
@@ -180,6 +249,8 @@ export function CleanupPage() {
               <tr>
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Action</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Label</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-500">Sender</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-500">Subject</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Date Range</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-500">Messages</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-500">Status</th>
@@ -189,7 +260,9 @@ export function CleanupPage() {
               {cleanups.map((job) => (
                 <tr key={job.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 font-medium text-gray-900 capitalize">{job.action}</td>
-                  <td className="px-4 py-3 text-gray-600">{job.label_filter || "All"}</td>
+                  <td className="px-4 py-3 text-gray-600">{job.label_filter || "—"}</td>
+                  <td className="px-4 py-3 text-gray-600 truncate max-w-[150px]" title={job.sender_filter ?? undefined}>{job.sender_filter || "—"}</td>
+                  <td className="px-4 py-3 text-gray-600 truncate max-w-[150px]" title={job.subject_filter ?? undefined}>{job.subject_filter || "—"}</td>
                   <td className="px-4 py-3 text-gray-600">
                     {formatCleanupDateRange(job.date_from, job.date_to)}
                   </td>
@@ -208,7 +281,7 @@ export function CleanupPage() {
               ))}
               {cleanups.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
                     No cleanup jobs yet.
                   </td>
                 </tr>

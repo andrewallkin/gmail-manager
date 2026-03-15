@@ -84,6 +84,8 @@ class CleanupJob(Base):
     label_filter: Mapped[str | None] = mapped_column(String(255), nullable=True)
     date_from: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     date_to: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sender_filter: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    subject_filter: Mapped[str | None] = mapped_column(String(255), nullable=True)
     action: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
     total_messages: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

@@ -11,6 +11,7 @@ from app.deps import require_jwt_user
 from app.models import CleanupJob, Label, Rule, User
 from app.services.ai_service import AIService
 from app.services.gmail_service import GmailService, parse_message_details
+from app.services.query_utils import build_or_term
 from app.services.rule_engine import apply_rule_actions, message_matches_rule
 
 router = APIRouter(prefix="/api/cleanup", tags=["cleanup"])
@@ -19,6 +20,8 @@ log = logging.getLogger("cleanup")
 
 class CleanupCreate(BaseModel):
     label_filter: str | None = None
+    sender_filter: str | None = None
+    subject_filter: str | None = None
     date_from: str | None = None
     date_to: str | None = None
     action: str  # "delete" | "archive" | "mark_read"
@@ -27,6 +30,8 @@ class CleanupCreate(BaseModel):
 class CleanupOut(BaseModel):
     id: int
     label_filter: str | None
+    sender_filter: str | None
+    subject_filter: str | None
     date_from: datetime | None
     date_to: datetime | None
     action: str
@@ -41,9 +46,23 @@ class CleanupOut(BaseModel):
 
 class PreviewRequest(BaseModel):
     label_filter: str | None = None
+    sender_filter: str | None = None
+    subject_filter: str | None = None
     date_from: str | None = None
     date_to: str | None = None
     action: str | None = None
+
+
+class PreviewMessageSummary(BaseModel):
+    message_id: str
+    sender: str
+    subject: str
+    date: str
+
+
+class PreviewResponse(BaseModel):
+    total_count: int
+    messages: list[PreviewMessageSummary]
 
 
 class RetroactiveRequest(BaseModel):
@@ -53,10 +72,20 @@ class RetroactiveRequest(BaseModel):
     max_messages: int = Field(default=50, ge=1, le=50)
 
 
-def _build_cleanup_query(label_filter: str | None, date_from: str | None, date_to: str | None) -> str:
+def _build_cleanup_query(
+    label_filter: str | None,
+    date_from: str | None,
+    date_to: str | None,
+    sender_filter: str | None = None,
+    subject_filter: str | None = None,
+) -> str:
     query_parts: list[str] = []
     if label_filter:
         query_parts.append(f"label:{label_filter.replace(' ', '-')}")
+    if sender_filter:
+        query_parts.append(build_or_term("from", sender_filter))
+    if subject_filter:
+        query_parts.append(build_or_term("subject", subject_filter))
     if date_from:
         query_parts.append(f"after:{date_from[:10]}")
     if date_to:
@@ -69,19 +98,33 @@ def preview_cleanup(
     body: PreviewRequest,
     db: Session = Depends(get_db),
     user: User = Depends(require_jwt_user),
-) -> dict:
+) -> PreviewResponse:
     gmail = GmailService(db)
-    query = _build_cleanup_query(body.label_filter, body.date_from, body.date_to)
-    total = 0
+    query = _build_cleanup_query(
+        body.label_filter, body.date_from, body.date_to,
+        sender_filter=body.sender_filter, subject_filter=body.subject_filter,
+    )
+    all_msg_ids: list[str] = []
     page_token = None
     while True:
         result = gmail.list_messages(user, query=query, max_results=100, page_token=page_token)
         messages = result.get("messages", [])
-        total += len(messages)
+        all_msg_ids.extend(m["id"] for m in messages)
         page_token = result.get("nextPageToken")
         if not page_token or not messages:
             break
-    return {"estimated_count": total}
+
+    total_count = len(all_msg_ids)
+    detail_ids = all_msg_ids[:500]
+    summaries: list[PreviewMessageSummary] = []
+    for msg_id in detail_ids:
+        try:
+            meta = gmail.get_message_metadata(user, msg_id)
+            summaries.append(PreviewMessageSummary(**meta))
+        except Exception:
+            log.warning("Failed to fetch metadata for msg=%s", msg_id)
+
+    return PreviewResponse(total_count=total_count, messages=summaries)
 
 
 @router.post("/retroactive")
@@ -205,6 +248,8 @@ def start_cleanup(
     job = CleanupJob(
         user_id=user.id,
         label_filter=body.label_filter,
+        sender_filter=body.sender_filter,
+        subject_filter=body.subject_filter,
         date_from=datetime.fromisoformat(body.date_from) if body.date_from else None,
         date_to=datetime.fromisoformat(body.date_to) if body.date_to else None,
         action=body.action,
@@ -215,7 +260,10 @@ def start_cleanup(
     db.refresh(job)
 
     gmail = GmailService(db)
-    query = _build_cleanup_query(body.label_filter, body.date_from, body.date_to)
+    query = _build_cleanup_query(
+        body.label_filter, body.date_from, body.date_to,
+        sender_filter=body.sender_filter, subject_filter=body.subject_filter,
+    )
     total_processed = 0
 
     try:

@@ -266,9 +266,10 @@ export function RulesPage() {
               type="text"
               value={form.match_from ?? ""}
               onChange={(e) => updateField("match_from", e.target.value || null)}
-              placeholder="e.g., newsletter@example.com"
+              placeholder="e.g., newsletter@example.com, alerts@example.com"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+            <p className="text-xs text-gray-400 mt-1">Separate multiple values with commas (OR logic)</p>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">To (recipient)</label>
@@ -276,9 +277,10 @@ export function RulesPage() {
               type="text"
               value={form.match_to ?? ""}
               onChange={(e) => updateField("match_to", e.target.value || null)}
-              placeholder="e.g., me+alerts@example.com"
+              placeholder="e.g., me+alerts@example.com, team@example.com"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+            <p className="text-xs text-gray-400 mt-1">Separate multiple values with commas (OR logic)</p>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Subject contains</label>
@@ -286,9 +288,10 @@ export function RulesPage() {
               type="text"
               value={form.match_subject ?? ""}
               onChange={(e) => updateField("match_subject", e.target.value || null)}
-              placeholder="e.g., Weekly digest"
+              placeholder="e.g., Weekly digest, Monthly report"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+            <p className="text-xs text-gray-400 mt-1">Separate multiple values with commas (OR logic)</p>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Has words</label>
