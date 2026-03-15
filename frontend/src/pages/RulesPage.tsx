@@ -5,6 +5,7 @@ import {
   reorderRules, previewRule,
 } from "../lib/api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { parseUtcDate } from "../lib/format";
 
 const emptyRule: RuleCreate = {
   name: "",
@@ -25,7 +26,7 @@ const emptyRule: RuleCreate = {
 function relativeTime(dateStr: string | null): string {
   if (!dateStr) return "";
   const now = Date.now();
-  const then = new Date(dateStr).getTime();
+  const then = parseUtcDate(dateStr).getTime();
   const diffMs = now - then;
   const diffMin = Math.floor(diffMs / 60000);
   if (diffMin < 1) return "just now";
