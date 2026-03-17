@@ -120,7 +120,7 @@ export function DashboardPage() {
             <thead className="bg-google-bg border-b border-google-border">
               <tr>
                 <th className="text-left px-4 py-3 font-medium text-google-text-secondary">Action</th>
-                <th className="text-left px-4 py-3 font-medium text-google-text-secondary">Label</th>
+                <th className="text-left px-4 py-3 font-medium text-google-text-secondary">Filters</th>
                 <th className="text-left px-4 py-3 font-medium text-google-text-secondary">Date Range</th>
                 <th className="text-right px-4 py-3 font-medium text-google-text-secondary">Messages</th>
                 <th className="text-right px-4 py-3 font-medium text-google-text-secondary">Status</th>
@@ -130,7 +130,15 @@ export function DashboardPage() {
               {recentCleanups.map((job) => (
                 <tr key={job.id} className="hover:bg-google-hover">
                   <td className="px-4 py-3 font-medium text-google-text capitalize">{job.action}</td>
-                  <td className="px-4 py-3 text-google-text-secondary">{job.label_filter || "All"}</td>
+                  <td className="px-4 py-3 text-google-text-secondary">
+                    {(() => {
+                      const filters: string[] = [];
+                      if (job.label_filter) filters.push(`Label: ${job.label_filter}`);
+                      if (job.sender_filter) filters.push(`From: ${job.sender_filter}`);
+                      if (job.subject_filter) filters.push(`Subject: ${job.subject_filter}`);
+                      return filters.length > 0 ? filters.join(", ") : "None";
+                    })()}
+                  </td>
                   <td className="px-4 py-3 text-google-text-secondary">
                     {formatCleanupDateRange(job.date_from, job.date_to)}
                   </td>
