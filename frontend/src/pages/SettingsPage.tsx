@@ -88,71 +88,71 @@ export function SettingsPage({ status, onStatusChange }: Props) {
 
   return (
     <div className="space-y-8">
-      <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
+      <h1 className="text-2xl font-bold text-google-text">Settings</h1>
 
-      <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-gray-900">Account</h2>
+      <div className="bg-white rounded-2xl border border-google-border shadow-sm p-6 space-y-4">
+        <h2 className="text-lg font-semibold text-google-text">Account</h2>
         <div className="flex items-center gap-4">
           {status.profile_picture_url && (
             <img
               src={status.profile_picture_url}
               alt="Profile"
-              className="h-12 w-12 rounded-full object-cover border border-gray-200"
+              className="h-12 w-12 rounded-full object-cover border border-google-border"
             />
           )}
           <div>
-            <div className="font-medium text-gray-900">{status.display_name}</div>
-            <div className="text-sm text-gray-500">{status.email}</div>
+            <div className="font-medium text-google-text">{status.display_name}</div>
+            <div className="text-sm text-google-text-secondary">{status.email}</div>
           </div>
-          <span className="ml-auto px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
+          <span className="ml-auto px-3 py-1 rounded-full text-xs font-medium bg-google-green-light text-google-green">
             Connected
           </span>
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-gray-900">App Settings</h2>
-        <p className="text-sm text-gray-500">
+      <div className="bg-white rounded-2xl border border-google-border shadow-sm p-6 space-y-4">
+        <h2 className="text-lg font-semibold text-google-text">App Settings</h2>
+        <p className="text-sm text-google-text-secondary">
           Manage AI availability and automated inbox processing behavior.
         </p>
 
-        <label className="flex items-center gap-2 text-sm text-gray-700">
+        <label className="flex items-center gap-2 text-sm text-google-text-secondary">
           <input
             type="checkbox"
             checked={aiEnabled}
             onChange={(e) => setAiEnabled(e.target.checked)}
-            className="rounded border-gray-300"
+            className="rounded border-google-border"
           />
           Enable AI features
         </label>
 
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-google-text-secondary">
           When polling is enabled, the app automatically checks for new emails and runs rules.
         </p>
 
-        <label className="flex items-center gap-2 text-sm text-gray-700">
+        <label className="flex items-center gap-2 text-sm text-google-text-secondary">
           <input
             type="checkbox"
             checked={pollingEnabled}
             onChange={(e) => setPollingEnabled(e.target.checked)}
-            className="rounded border-gray-300"
+            className="rounded border-google-border"
           />
           Enable automatic polling
         </label>
 
-        <label className="flex items-center gap-2 text-sm text-gray-700">
+        <label className="flex items-center gap-2 text-sm text-google-text-secondary">
           <input
             type="checkbox"
             checked={autoRemoveInboxLabeledRead}
             onChange={(e) => setAutoRemoveInboxLabeledRead(e.target.checked)}
-            className="rounded border-gray-300"
+            className="rounded border-google-border"
           />
           Auto-remove Inbox label when classified emails are read in Primary inbox
         </label>
 
         {pollingEnabled && (
           <div className="max-w-xs">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-google-text-secondary mb-1">
               Poll interval: {pollingInterval} min
             </label>
             <input
@@ -163,7 +163,7 @@ export function SettingsPage({ status, onStatusChange }: Props) {
               onChange={(e) => setPollingInterval(Number(e.target.value))}
               className="w-full"
             />
-            <div className="flex justify-between text-xs text-gray-400">
+            <div className="flex justify-between text-xs text-google-text-tertiary">
               <span>1 min</span>
               <span>60 min</span>
             </div>
@@ -174,44 +174,44 @@ export function SettingsPage({ status, onStatusChange }: Props) {
           <button
             onClick={handleSave}
             disabled={saving}
-            className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition-colors"
+            className="px-4 py-2 text-sm font-medium rounded-lg bg-google-blue text-white hover:bg-google-blue-hover disabled:opacity-50 transition-colors"
           >
             {saving ? "Saving..." : "Save App Settings"}
           </button>
-          {saved && <span className="text-sm text-green-600">App settings saved</span>}
+          {saved && <span className="text-sm text-google-green">App settings saved</span>}
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-gray-900">System Label Retention</h2>
-        <p className="text-sm text-gray-500">
+      <div className="bg-white rounded-2xl border border-google-border shadow-sm p-6 space-y-4">
+        <h2 className="text-lg font-semibold text-google-text">System Label Retention</h2>
+        <p className="text-sm text-google-text-secondary">
           Automatically trash emails older than the configured retention period for each category.
         </p>
 
         {retentionLoading ? (
           <div className="flex justify-center py-4">
-            <div className="h-6 w-6 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
+            <div className="h-6 w-6 rounded-full border-4 border-google-blue border-t-transparent animate-spin" />
           </div>
         ) : (
           <>
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
+              <thead className="bg-google-bg border-b border-google-border">
                 <tr>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Category</th>
-                  <th className="text-center px-4 py-3 font-medium text-gray-500">Enabled</th>
-                  <th className="text-right px-4 py-3 font-medium text-gray-500">Retention (days)</th>
+                  <th className="text-left px-4 py-3 font-medium text-google-text-secondary">Category</th>
+                  <th className="text-center px-4 py-3 font-medium text-google-text-secondary">Enabled</th>
+                  <th className="text-right px-4 py-3 font-medium text-google-text-secondary">Retention (days)</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-google-border-light">
                 {retention.map((r) => (
-                  <tr key={r.category} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 font-medium text-gray-900 capitalize">{r.category}</td>
+                  <tr key={r.category} className="hover:bg-google-hover">
+                    <td className="px-4 py-3 font-medium text-google-text capitalize">{r.category}</td>
                     <td className="px-4 py-3 text-center">
                       <input
                         type="checkbox"
                         checked={r.enabled}
                         onChange={(e) => updateRetentionItem(r.category, "enabled", e.target.checked)}
-                        className="rounded border-gray-300"
+                        className="rounded border-google-border"
                       />
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -221,7 +221,7 @@ export function SettingsPage({ status, onStatusChange }: Props) {
                         max={365}
                         value={r.retention_days}
                         onChange={(e) => updateRetentionItem(r.category, "retention_days", Math.max(1, Number(e.target.value)))}
-                        className="w-20 px-2 py-1 border border-gray-300 rounded text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-20 px-2 py-1 border border-google-border rounded text-sm text-right focus:outline-none focus:ring-2 focus:ring-google-blue"
                       />
                     </td>
                   </tr>
@@ -232,24 +232,24 @@ export function SettingsPage({ status, onStatusChange }: Props) {
               <button
                 onClick={handleRetentionSave}
                 disabled={retentionSaving}
-                className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition-colors"
+                className="px-4 py-2 text-sm font-medium rounded-lg bg-google-blue text-white hover:bg-google-blue-hover disabled:opacity-50 transition-colors"
               >
                 {retentionSaving ? "Saving..." : "Save Retention Settings"}
               </button>
-              {retentionSaved && <span className="text-sm text-green-600">Retention saved</span>}
+              {retentionSaved && <span className="text-sm text-google-green">Retention saved</span>}
             </div>
           </>
         )}
       </div>
 
-      <div className="bg-white rounded-xl border border-red-200 p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-red-900">Danger Zone</h2>
-        <p className="text-sm text-gray-500">
+      <div className="bg-white rounded-2xl border border-gmail-red-border p-6 space-y-4">
+        <h2 className="text-lg font-semibold text-gmail-red">Danger Zone</h2>
+        <p className="text-sm text-google-text-secondary">
           Disconnect your Google account. This will clear your tokens and log you out.
         </p>
         <button
           onClick={handleDisconnectClick}
-          className="px-4 py-2 text-sm font-medium rounded-lg border border-red-300 text-red-700 hover:bg-red-50 transition-colors"
+          className="px-4 py-2 text-sm font-medium rounded-lg border border-gmail-red-border text-gmail-red hover:bg-gmail-red-light transition-colors"
         >
           Disconnect Google Account
         </button>

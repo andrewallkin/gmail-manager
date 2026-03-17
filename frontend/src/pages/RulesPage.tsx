@@ -40,7 +40,7 @@ function relativeTime(dateStr: string | null): string {
 function ChevronIcon({ open }: { open: boolean }) {
   return (
     <svg
-      className={`w-4 h-4 text-gray-500 transition-transform duration-200 ${open ? "rotate-90" : ""}`}
+      className={`w-4 h-4 text-google-text-secondary transition-transform duration-200 ${open ? "rotate-90" : ""}`}
       fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
     >
       <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
@@ -50,7 +50,7 @@ function ChevronIcon({ open }: { open: boolean }) {
 
 function GripIcon() {
   return (
-    <svg className="w-4 h-4 text-gray-400" fill="currentColor" viewBox="0 0 24 24">
+    <svg className="w-4 h-4 text-google-text-tertiary" fill="currentColor" viewBox="0 0 24 24">
       <circle cx="9" cy="5" r="1.5" />
       <circle cx="15" cy="5" r="1.5" />
       <circle cx="9" cy="12" r="1.5" />
@@ -88,11 +88,11 @@ function CollapsibleSection({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="border border-gray-200 rounded-lg">
+    <div className="border border-google-border rounded-lg">
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+        className="w-full flex items-center gap-2 px-4 py-3 text-sm font-medium text-google-text-secondary hover:bg-google-hover transition-colors"
       >
         <ChevronIcon open={open} />
         {title}
@@ -315,33 +315,33 @@ export function RulesPage() {
   if (loading) {
     return (
       <div className="flex justify-center py-12">
-        <div className="h-8 w-8 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
+        <div className="h-8 w-8 rounded-full border-4 border-google-blue border-t-transparent animate-spin" />
       </div>
     );
   }
 
   const formModal = showForm && (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40"
       onClick={closeForm}
     >
       <div
-        className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 space-y-4"
+        className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 space-y-4"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 className="text-lg font-semibold text-gray-900">
+        <h2 className="text-lg font-semibold text-google-text">
         {editingId ? "Edit Rule" : "Create Rule"}
       </h2>
 
       {/* Rule Name */}
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Rule Name</label>
+        <label className="block text-sm font-medium text-google-text-secondary mb-1">Rule Name</label>
         <input
           type="text"
           value={form.name}
           onChange={(e) => updateField("name", e.target.value)}
           placeholder="e.g., Archive newsletters"
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
         />
       </div>
 
@@ -349,64 +349,64 @@ export function RulesPage() {
       <CollapsibleSection title="Conditions">
         <div className="space-y-3">
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">From (email/domain)</label>
+            <label className="block text-xs font-medium text-google-text-secondary mb-1">From (email/domain)</label>
             <input
               type="text"
               value={form.match_from ?? ""}
               onChange={(e) => updateField("match_from", e.target.value || null)}
               placeholder="e.g., newsletter@example.com, alerts@example.com"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
             />
-            <p className="text-xs text-gray-400 mt-1">Separate multiple values with commas (OR logic)</p>
+            <p className="text-xs text-google-text-tertiary mt-1">Separate multiple values with commas (OR logic)</p>
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">To (recipient)</label>
+            <label className="block text-xs font-medium text-google-text-secondary mb-1">To (recipient)</label>
             <input
               type="text"
               value={form.match_to ?? ""}
               onChange={(e) => updateField("match_to", e.target.value || null)}
               placeholder="e.g., me+alerts@example.com, team@example.com"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
             />
-            <p className="text-xs text-gray-400 mt-1">Separate multiple values with commas (OR logic)</p>
+            <p className="text-xs text-google-text-tertiary mt-1">Separate multiple values with commas (OR logic)</p>
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Subject contains</label>
+            <label className="block text-xs font-medium text-google-text-secondary mb-1">Subject contains</label>
             <input
               type="text"
               value={form.match_subject ?? ""}
               onChange={(e) => updateField("match_subject", e.target.value || null)}
               placeholder="e.g., Weekly digest, Monthly report"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
             />
-            <p className="text-xs text-gray-400 mt-1">Separate multiple values with commas (OR logic)</p>
+            <p className="text-xs text-google-text-tertiary mt-1">Separate multiple values with commas (OR logic)</p>
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Has words</label>
+            <label className="block text-xs font-medium text-google-text-secondary mb-1">Has words</label>
             <input
               type="text"
               value={form.match_has_words ?? ""}
               onChange={(e) => updateField("match_has_words", e.target.value || null)}
               placeholder="e.g., unsubscribe promotion"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Doesn't have words</label>
+            <label className="block text-xs font-medium text-google-text-secondary mb-1">Doesn't have words</label>
             <input
               type="text"
               value={form.match_doesnt_have ?? ""}
               onChange={(e) => updateField("match_doesnt_have", e.target.value || null)}
               placeholder="e.g., important urgent"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Match label</label>
+            <label className="block text-xs font-medium text-google-text-secondary mb-1">Match label</label>
             <select
               value={form.match_label_id ?? ""}
               onChange={(e) => updateField("match_label_id", e.target.value ? Number(e.target.value) : null)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
             >
               <option value="">None</option>
               {userLabels.map((l) => (
@@ -419,25 +419,25 @@ export function RulesPage() {
 
       {/* Scope Section */}
       <CollapsibleSection title="Scope">
-        <p className="text-xs text-gray-400 mb-2">Choose which inbox messages this rule applies to.</p>
+        <p className="text-xs text-google-text-tertiary mb-2">Choose which inbox messages this rule applies to.</p>
         <div className="flex flex-wrap gap-4">
-          <label className="flex items-center gap-2 text-sm text-gray-700">
+          <label className="flex items-center gap-2 text-sm text-google-text-secondary">
             <input
               type="radio"
               name="scope"
               checked={form.scope === "primary"}
               onChange={() => updateField("scope", "primary")}
-              className="border-gray-300"
+              className="border-google-border"
             />
             Primary
           </label>
-          <label className="flex items-center gap-2 text-sm text-gray-700">
+          <label className="flex items-center gap-2 text-sm text-google-text-secondary">
             <input
               type="radio"
               name="scope"
               checked={form.scope === "all_inbox"}
               onChange={() => updateField("scope", "all_inbox")}
-              className="border-gray-300"
+              className="border-google-border"
             />
             All Inbox
           </label>
@@ -447,40 +447,40 @@ export function RulesPage() {
       {/* Actions Section */}
       <CollapsibleSection title="Actions">
         <div className="flex flex-wrap gap-4">
-          <label className="flex items-center gap-2 text-sm text-gray-700">
+          <label className="flex items-center gap-2 text-sm text-google-text-secondary">
             <input
               type="checkbox"
               checked={form.action_archive}
               onChange={(e) => updateField("action_archive", e.target.checked)}
-              className="rounded border-gray-300"
+              className="rounded border-google-border"
             />
             Archive
           </label>
-          <label className="flex items-center gap-2 text-sm text-gray-700">
+          <label className="flex items-center gap-2 text-sm text-google-text-secondary">
             <input
               type="checkbox"
               checked={form.action_delete}
               onChange={(e) => updateField("action_delete", e.target.checked)}
-              className="rounded border-gray-300"
+              className="rounded border-google-border"
             />
             Delete
           </label>
-          <label className="flex items-center gap-2 text-sm text-gray-700">
+          <label className="flex items-center gap-2 text-sm text-google-text-secondary">
             <input
               type="checkbox"
               checked={form.action_mark_read}
               onChange={(e) => updateField("action_mark_read", e.target.checked)}
-              className="rounded border-gray-300"
+              className="rounded border-google-border"
             />
             Mark as Read
           </label>
         </div>
         <div className="mt-3">
-          <label className="block text-xs font-medium text-gray-600 mb-1">Apply label</label>
+          <label className="block text-xs font-medium text-google-text-secondary mb-1">Apply label</label>
           <select
             value={form.action_label_id ?? ""}
             onChange={(e) => updateField("action_label_id", e.target.value ? Number(e.target.value) : null)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
           >
             <option value="">None</option>
             {userLabels.map((l) => (
@@ -492,19 +492,19 @@ export function RulesPage() {
 
       {/* Preview result */}
       {preview && (
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm">
-          <div className="font-medium text-gray-700">
+        <div className="bg-google-bg border border-google-border rounded-lg p-3 text-sm">
+          <div className="font-medium text-google-text-secondary">
             {preview.estimated_count} email{preview.estimated_count !== 1 ? "s" : ""} match this rule
           </div>
           {preview.query && (
-            <div className="text-xs text-gray-500 font-mono mt-1 truncate" title={preview.query}>
+            <div className="text-xs text-google-text-tertiary font-mono mt-1 truncate" title={preview.query}>
               Query: {preview.query}
             </div>
           )}
           {preview.sample_subjects.length > 0 && (
             <ul className="mt-2 space-y-1">
               {preview.sample_subjects.map((s, i) => (
-                <li key={i} className="text-xs text-gray-600 truncate">- {s}</li>
+                <li key={i} className="text-xs text-google-text-secondary truncate">- {s}</li>
               ))}
             </ul>
           )}
@@ -516,20 +516,20 @@ export function RulesPage() {
         <button
           onClick={handleSave}
           disabled={saving || !form.name.trim()}
-          className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition-colors"
+          className="px-4 py-2 text-sm font-medium rounded-lg bg-google-blue text-white hover:bg-google-blue-hover disabled:opacity-50 transition-colors"
         >
           {saving ? "Saving..." : editingId ? "Update" : "Create"}
         </button>
         <button
           onClick={handlePreview}
           disabled={previewing}
-          className="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 disabled:opacity-50 transition-colors"
+          className="px-4 py-2 text-sm font-medium rounded-lg border border-google-border text-google-text-secondary hover:bg-google-hover disabled:opacity-50 transition-colors"
         >
           {previewing ? "Checking..." : "Preview"}
         </button>
         <button
           onClick={closeForm}
-          className="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 transition-colors"
+          className="px-4 py-2 text-sm font-medium rounded-lg border border-google-border text-google-text-secondary hover:bg-google-hover transition-colors"
         >
           Cancel
         </button>
@@ -541,10 +541,10 @@ export function RulesPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Rules</h1>
+        <h1 className="text-2xl font-bold text-google-text">Rules</h1>
         <button
           onClick={openCreate}
-          className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors"
+          className="px-4 py-2 text-sm font-medium rounded-lg bg-google-blue text-white hover:bg-google-blue-hover transition-colors"
         >
           Create Rule
         </button>
@@ -554,19 +554,19 @@ export function RulesPage() {
         <div
           className={`rounded-lg px-4 py-3 text-sm flex justify-between items-start gap-4 ${
             runResult.startsWith("Failed")
-              ? "bg-red-50 border border-red-200 text-red-700"
-              : "bg-blue-50 border border-blue-200 text-blue-700"
+              ? "bg-gmail-red-light border border-gmail-red-border text-gmail-red"
+              : "bg-google-blue-light border border-google-blue-border text-google-blue"
           }`}
         >
           <div className="min-w-0 flex-1">
             <div>{runResult.split("\n")[0]}</div>
             {runResult.includes("\n") && (
-              <div className={`mt-1 text-xs font-mono truncate ${runResult.startsWith("Failed") ? "text-red-600" : "text-blue-600"}`} title={runResult.split("\n").slice(1).join(" ")}>
+              <div className={`mt-1 text-xs font-mono truncate ${runResult.startsWith("Failed") ? "text-gmail-red" : "text-google-blue"}`} title={runResult.split("\n").slice(1).join(" ")}>
                 {runResult.split("\n").slice(1).join(" ")}
               </div>
             )}
           </div>
-          <button onClick={() => setRunResult(null)} className={runResult.startsWith("Failed") ? "text-red-500 hover:text-red-700 flex-shrink-0" : "text-blue-500 hover:text-blue-700 flex-shrink-0"}>&times;</button>
+          <button onClick={() => setRunResult(null)} className={runResult.startsWith("Failed") ? "text-gmail-red hover:text-gmail-red-hover flex-shrink-0" : "text-google-blue hover:text-google-blue-hover flex-shrink-0"}>&times;</button>
         </div>
       )}
 
@@ -584,8 +584,8 @@ export function RulesPage() {
 
       <div className="max-w-4xl space-y-4">
         <div className="mb-2">
-          <h2 className="text-lg font-semibold text-gray-900">Rules (priority order)</h2>
-          <p className="text-sm text-gray-500">Top rules run first. Drag to reorder.</p>
+          <h2 className="text-lg font-semibold text-google-text">Rules (priority order)</h2>
+          <p className="text-sm text-google-text-secondary">Top rules run first. Drag to reorder.</p>
         </div>
         {rules.map((rule, idx) => (
           <div
@@ -593,14 +593,14 @@ export function RulesPage() {
             onDragOver={(e) => handleDragOver(e, idx)}
             onDrop={handleDrop}
             onDragEnd={handleDragEnd}
-            className={`bg-white rounded-xl border border-gray-200 p-6 transition-colors ${
-              dragOver === idx ? "ring-2 ring-blue-400 bg-blue-50/50" : ""
+            className={`bg-white rounded-2xl border border-google-border shadow-sm p-6 transition-colors ${
+              dragOver === idx ? "ring-2 ring-google-blue bg-google-blue-light/50" : ""
             }`}
           >
             <div className="flex items-start justify-between">
               <div className="flex items-start gap-3 flex-1 min-w-0">
                 <div className="flex flex-col items-center gap-0.5 flex-shrink-0">
-                  <span className="text-xs font-medium text-gray-500">#{idx + 1}</span>
+                  <span className="text-xs font-medium text-google-text-secondary">#{idx + 1}</span>
                   <div
                     draggable
                     onDragStart={() => handleDragStart(idx)}
@@ -611,10 +611,10 @@ export function RulesPage() {
                 </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${rule.enabled ? "bg-green-500" : "bg-gray-300"}`} />
-                      <span className="font-medium text-gray-900 truncate">{rule.name}</span>
+                      <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${rule.enabled ? "bg-google-green" : "bg-google-border"}`} />
+                      <span className="font-medium text-google-text truncate">{rule.name}</span>
                     </div>
-                    <div className="mt-2 text-xs text-gray-500 space-y-1">
+                    <div className="mt-2 text-xs text-google-text-secondary space-y-1">
                       {rule.match_from && <div>From: {rule.match_from}</div>}
                       {rule.match_to && <div>To: {rule.match_to}</div>}
                       {rule.match_subject && <div>Subject: {rule.match_subject}</div>}
@@ -628,17 +628,17 @@ export function RulesPage() {
                         <span key={s} className="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">{s}</span>
                       ))}
                       {rule.action_label_id && (
-                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-google-yellow-light text-google-yellow-text">
                           Label: {labelName(rule.action_label_id) ?? `#${rule.action_label_id}`}
                         </span>
                       )}
-                      {rule.action_archive && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">Archive</span>}
-                      {rule.action_delete && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">Delete</span>}
-                      {rule.action_mark_read && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">Mark Read</span>}
+                      {rule.action_archive && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-google-blue-light text-google-blue">Archive</span>}
+                      {rule.action_delete && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gmail-red-light text-gmail-red">Delete</span>}
+                      {rule.action_mark_read && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-google-green-light text-google-green">Mark Read</span>}
                     </div>
                     {/* Rule stats */}
                     {rule.total_matched > 0 && (
-                      <div className="mt-2 text-xs text-gray-400">
+                      <div className="mt-2 text-xs text-google-text-tertiary">
                         {rule.total_matched} email{rule.total_matched !== 1 ? "s" : ""} matched
                         {rule.last_matched_at && ` · last ${relativeTime(rule.last_matched_at)}`}
                       </div>
@@ -650,7 +650,7 @@ export function RulesPage() {
                     <button
                       onClick={() => handleMoveUp(idx)}
                       disabled={idx === 0}
-                      className="p-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      className="p-1 rounded border border-google-border text-google-text-secondary hover:bg-google-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                       title="Move up"
                     >
                       <ChevronUpIcon />
@@ -658,7 +658,7 @@ export function RulesPage() {
                     <button
                       onClick={() => handleMoveDown(idx)}
                       disabled={idx === rules.length - 1}
-                      className="p-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      className="p-1 rounded border border-google-border text-google-text-secondary hover:bg-google-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                       title="Move down"
                     >
                       <ChevronDownIcon />
@@ -667,19 +667,19 @@ export function RulesPage() {
                   <button
                     onClick={() => handleRun(rule)}
                     disabled={runningId === rule.id}
-                    className="px-3 py-1.5 text-xs font-medium rounded-md border border-gray-300 text-gray-700 hover:bg-gray-100 disabled:opacity-50 transition-colors"
+                    className="px-3 py-1.5 text-xs font-medium rounded-md border border-google-border text-google-text-secondary hover:bg-google-hover disabled:opacity-50 transition-colors"
                   >
                     {runningId === rule.id ? "Running..." : "Run"}
                   </button>
                   <button
                     onClick={() => openEdit(rule)}
-                    className="px-3 py-1.5 text-xs font-medium rounded-md border border-gray-300 text-gray-700 hover:bg-gray-100 transition-colors"
+                    className="px-3 py-1.5 text-xs font-medium rounded-md border border-google-border text-google-text-secondary hover:bg-google-hover transition-colors"
                   >
                     Edit
                   </button>
                   <button
                     onClick={() => handleDeleteClick(rule)}
-                    className="px-3 py-1.5 text-xs font-medium rounded-md border border-red-300 text-red-700 hover:bg-red-50 transition-colors"
+                    className="px-3 py-1.5 text-xs font-medium rounded-md border border-gmail-red-border text-gmail-red hover:bg-gmail-red-light transition-colors"
                   >
                     Delete
                   </button>
@@ -688,7 +688,7 @@ export function RulesPage() {
             </div>
         ))}
         {rules.length === 0 && !showForm && (
-          <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-500">
+          <div className="bg-white rounded-2xl border border-google-border shadow-sm p-8 text-center text-google-text-secondary">
             No rules yet. Click "Create Rule" to get started.
           </div>
         )}

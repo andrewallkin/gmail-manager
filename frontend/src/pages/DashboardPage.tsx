@@ -47,7 +47,7 @@ export function DashboardPage() {
   if (loading) {
     return (
       <div className="flex justify-center py-12">
-        <div className="h-8 w-8 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
+        <div className="h-8 w-8 rounded-full border-4 border-google-blue border-t-transparent animate-spin" />
       </div>
     );
   }
@@ -56,36 +56,36 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-8">
-      <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+      <h1 className="text-2xl font-bold text-google-text">Dashboard</h1>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <div className="text-sm font-medium text-gray-500">Labels</div>
-          <div className="mt-1 text-3xl font-bold text-gray-900">{labels.length}</div>
-          <div className="mt-1 text-xs text-gray-400">
+        <div className="bg-white rounded-2xl border border-google-border shadow-sm p-6">
+          <div className="text-sm font-medium text-google-text-secondary">Labels</div>
+          <div className="mt-1 text-3xl font-bold text-google-text">{labels.length}</div>
+          <div className="mt-1 text-xs text-google-text-tertiary">
             {labels.filter(l => l.label_type === "user").length} user / {labels.filter(l => l.label_type === "system").length} system
           </div>
         </div>
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <div className="text-sm font-medium text-gray-500">Rules</div>
-          <div className="mt-1 text-3xl font-bold text-gray-900">{rules.length}</div>
-          <div className="mt-1 text-xs text-gray-400">
+        <div className="bg-white rounded-2xl border border-google-border shadow-sm p-6">
+          <div className="text-sm font-medium text-google-text-secondary">Rules</div>
+          <div className="mt-1 text-3xl font-bold text-google-text">{rules.length}</div>
+          <div className="mt-1 text-xs text-google-text-tertiary">
             {rules.filter(r => r.enabled).length} active
           </div>
         </div>
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <div className="text-sm font-medium text-gray-500">Cleanup Jobs</div>
-          <div className="mt-1 text-3xl font-bold text-gray-900">{cleanups.length}</div>
-          <div className="mt-1 text-xs text-gray-400">
+        <div className="bg-white rounded-2xl border border-google-border shadow-sm p-6">
+          <div className="text-sm font-medium text-google-text-secondary">Cleanup Jobs</div>
+          <div className="mt-1 text-3xl font-bold text-google-text">{cleanups.length}</div>
+          <div className="mt-1 text-xs text-google-text-tertiary">
             {cleanups.filter(c => c.status === "completed").length} completed
           </div>
         </div>
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <div className="text-sm font-medium text-gray-500">Polling</div>
-          <div className="mt-1 text-3xl font-bold text-gray-900">
+        <div className="bg-white rounded-2xl border border-google-border shadow-sm p-6">
+          <div className="text-sm font-medium text-google-text-secondary">Polling</div>
+          <div className="mt-1 text-3xl font-bold text-google-text">
             {status?.polling_enabled ? "On" : "Off"}
           </div>
-          <div className="mt-1 text-xs text-gray-400">
+          <div className="mt-1 text-xs text-google-text-tertiary">
             {status?.polling_enabled
               ? `Every ${status.polling_interval_minutes} min`
               : "Disabled"}
@@ -93,20 +93,20 @@ export function DashboardPage() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h2>
+      <div className="bg-white rounded-2xl border border-google-border shadow-sm p-6">
+        <h2 className="text-lg font-semibold text-google-text mb-4">Quick Actions</h2>
         <div className="flex flex-wrap gap-3">
           <button
             onClick={handleSync}
             disabled={syncing}
-            className="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 disabled:opacity-50 transition-colors"
+            className="px-4 py-2 text-sm font-medium rounded-lg border border-google-border text-google-text-secondary hover:bg-google-hover disabled:opacity-50 transition-colors"
           >
             {syncing ? "Syncing..." : "Sync Labels"}
           </button>
           <button
             onClick={handleRunAll}
             disabled={runningAll || rules.filter(r => r.enabled).length === 0}
-            className="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 disabled:opacity-50 transition-colors"
+            className="px-4 py-2 text-sm font-medium rounded-lg border border-google-border text-google-text-secondary hover:bg-google-hover disabled:opacity-50 transition-colors"
           >
             {runningAll ? "Running..." : `Run All Rules (${rules.filter(r => r.enabled).length})`}
           </button>
@@ -114,33 +114,33 @@ export function DashboardPage() {
       </div>
 
       {recentCleanups.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <h2 className="text-lg font-semibold text-gray-900 px-6 py-4 border-b border-gray-200">Recent Cleanup Jobs</h2>
+        <div className="bg-white rounded-2xl border border-google-border shadow-sm overflow-hidden">
+          <h2 className="text-lg font-semibold text-google-text px-6 py-4 border-b border-google-border">Recent Cleanup Jobs</h2>
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
+            <thead className="bg-google-bg border-b border-google-border">
               <tr>
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Action</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Label</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Date Range</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-500">Messages</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-500">Status</th>
+                <th className="text-left px-4 py-3 font-medium text-google-text-secondary">Action</th>
+                <th className="text-left px-4 py-3 font-medium text-google-text-secondary">Label</th>
+                <th className="text-left px-4 py-3 font-medium text-google-text-secondary">Date Range</th>
+                <th className="text-right px-4 py-3 font-medium text-google-text-secondary">Messages</th>
+                <th className="text-right px-4 py-3 font-medium text-google-text-secondary">Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-google-border-light">
               {recentCleanups.map((job) => (
-                <tr key={job.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 font-medium text-gray-900 capitalize">{job.action}</td>
-                  <td className="px-4 py-3 text-gray-600">{job.label_filter || "All"}</td>
-                  <td className="px-4 py-3 text-gray-600">
+                <tr key={job.id} className="hover:bg-google-hover">
+                  <td className="px-4 py-3 font-medium text-google-text capitalize">{job.action}</td>
+                  <td className="px-4 py-3 text-google-text-secondary">{job.label_filter || "All"}</td>
+                  <td className="px-4 py-3 text-google-text-secondary">
                     {formatCleanupDateRange(job.date_from, job.date_to)}
                   </td>
-                  <td className="px-4 py-3 text-right text-gray-600">{job.processed_messages}</td>
+                  <td className="px-4 py-3 text-right text-google-text-secondary">{job.processed_messages}</td>
                   <td className="px-4 py-3 text-right">
                     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                      job.status === "completed" ? "bg-green-100 text-green-700" :
-                      job.status === "failed" ? "bg-red-100 text-red-700" :
-                      job.status === "running" ? "bg-blue-100 text-blue-700" :
-                      "bg-yellow-100 text-yellow-700"
+                      job.status === "completed" ? "bg-google-green-light text-google-green" :
+                      job.status === "failed" ? "bg-gmail-red-light text-gmail-red" :
+                      job.status === "running" ? "bg-google-blue-light text-google-blue" :
+                      "bg-google-yellow-light text-google-yellow-text"
                     }`}>
                       {job.status}
                     </span>

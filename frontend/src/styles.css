@@ -1,1 +1,38 @@
 @import "tailwindcss";
+
+@theme {
+  /* Google Blue */
+  --color-google-blue: #1a73e8;
+  --color-google-blue-hover: #1557b0;
+  --color-google-blue-light: #e8f0fe;
+  --color-google-blue-border: #c6dafc;
+
+  /* Gmail Red */
+  --color-gmail-red: #d93025;
+  --color-gmail-red-hover: #b3261e;
+  --color-gmail-red-light: #fce8e6;
+  --color-gmail-red-border: #f5c6c2;
+
+  /* Google Green */
+  --color-google-green: #188038;
+  --color-google-green-light: #e6f4ea;
+
+  /* Google Yellow */
+  --color-google-yellow: #f9ab00;
+  --color-google-yellow-light: #fef7e0;
+  --color-google-yellow-text: #e37400;
+
+  /* Surfaces & Text */
+  --color-google-bg: #f8f9fa;
+  --color-google-surface: #ffffff;
+  --color-google-hover: #f1f3f4;
+  --color-google-text: #202124;
+  --color-google-text-secondary: #5f6368;
+  --color-google-text-tertiary: #80868b;
+  --color-google-border: #dadce0;
+  --color-google-border-light: #e8eaed;
+}
+
+input[type="range"] {
+  accent-color: var(--color-google-blue);
+}

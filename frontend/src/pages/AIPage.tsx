@@ -144,16 +144,16 @@ export function AIPage({ status, onStatusChange }: Props) {
   if (!status.ai_enabled) {
     return (
       <div className="space-y-8">
-        <h1 className="text-2xl font-bold text-gray-900">AI</h1>
-        <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-3">
-          <h2 className="text-lg font-semibold text-gray-900">AI is currently disabled</h2>
-          <p className="text-sm text-gray-600">
+        <h1 className="text-2xl font-bold text-google-text">AI</h1>
+        <div className="bg-white rounded-2xl border border-google-border shadow-sm p-6 space-y-3">
+          <h2 className="text-lg font-semibold text-google-text">AI is currently disabled</h2>
+          <p className="text-sm text-google-text-secondary">
             Enable AI features in Settings before using AI provider configuration, label context, and
             historical AI classification.
           </p>
           <Link
             to="/settings"
-            className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors"
+            className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg bg-google-blue text-white hover:bg-google-blue-hover transition-colors"
           >
             Go to Settings
           </Link>
@@ -164,20 +164,20 @@ export function AIPage({ status, onStatusChange }: Props) {
 
   return (
     <div className="space-y-8">
-      <h1 className="text-2xl font-bold text-gray-900">AI</h1>
+      <h1 className="text-2xl font-bold text-google-text">AI</h1>
 
-      <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-gray-900">AI Configuration</h2>
-        <p className="text-sm text-gray-500">
+      <div className="bg-white rounded-2xl border border-google-border shadow-sm p-6 space-y-4">
+        <h2 className="text-lg font-semibold text-google-text">AI Configuration</h2>
+        <p className="text-sm text-google-text-secondary">
           Configure AI provider credentials and classification behavior.
         </p>
 
-        <label className="flex items-center gap-2 text-sm text-gray-700">
+        <label className="flex items-center gap-2 text-sm text-google-text-secondary">
           <input
             type="checkbox"
             checked={autoRemoveInbox}
             onChange={(e) => setAutoRemoveInbox(e.target.checked)}
-            className="rounded border-gray-300"
+            className="rounded border-google-border"
           />
           Remove Inbox label automatically when an email is read and classified into any user label except
           &nbsp;"Unclassified" (Primary inbox only)
@@ -185,11 +185,11 @@ export function AIPage({ status, onStatusChange }: Props) {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">AI Provider</label>
+            <label className="block text-sm font-medium text-google-text-secondary mb-1">AI Provider</label>
             <select
               value={aiProvider}
               onChange={(e) => setAiProvider(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue bg-white"
             >
               <option value="">Select provider</option>
               <option value="openai">OpenAI</option>
@@ -197,15 +197,15 @@ export function AIPage({ status, onStatusChange }: Props) {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">API Key</label>
+            <label className="block text-sm font-medium text-google-text-secondary mb-1">API Key</label>
             <input
               type="password"
               value={aiApiKey}
               onChange={(e) => setAiApiKey(e.target.value)}
               placeholder="Enter API key"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
             />
-            <p className="mt-1 text-xs text-gray-400">Leave blank to keep the existing key</p>
+            <p className="mt-1 text-xs text-google-text-tertiary">Leave blank to keep the existing key</p>
           </div>
         </div>
 
@@ -213,30 +213,30 @@ export function AIPage({ status, onStatusChange }: Props) {
           <button
             onClick={handleSaveSettings}
             disabled={savingSettings}
-            className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition-colors"
+            className="px-4 py-2 text-sm font-medium rounded-lg bg-google-blue text-white hover:bg-google-blue-hover disabled:opacity-50 transition-colors"
           >
             {savingSettings ? "Saving..." : "Save AI Settings"}
           </button>
-          {settingsSaved && <span className="text-sm text-green-600">AI settings saved</span>}
+          {settingsSaved && <span className="text-sm text-google-green">AI settings saved</span>}
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-gray-900">Label Context for AI</h2>
-        <p className="text-sm text-gray-500">
+      <div className="bg-white rounded-2xl border border-google-border shadow-sm p-6 space-y-4">
+        <h2 className="text-lg font-semibold text-google-text">Label Context for AI</h2>
+        <p className="text-sm text-google-text-secondary">
           Add short guidance for each label. These descriptions are passed into the AI classification prompt.
         </p>
 
         {loadingLabels ? (
           <div className="flex justify-center py-6">
-            <div className="h-6 w-6 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
+            <div className="h-6 w-6 rounded-full border-4 border-google-blue border-t-transparent animate-spin" />
           </div>
         ) : (
           <>
             <div className="space-y-3">
               {labels.map((label) => (
-                <div key={label.id} className="border border-gray-200 rounded-lg p-3">
-                  <div className="text-sm font-medium text-gray-900 mb-2">{label.name}</div>
+                <div key={label.id} className="border border-google-border rounded-lg p-3">
+                  <div className="text-sm font-medium text-google-text mb-2">{label.name}</div>
                   <textarea
                     value={descriptions[label.id] ?? ""}
                     onChange={(e) =>
@@ -244,12 +244,12 @@ export function AIPage({ status, onStatusChange }: Props) {
                     }
                     rows={2}
                     placeholder="Describe what kinds of emails belong in this label..."
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
                   />
                 </div>
               ))}
               {labels.length === 0 && (
-                <div className="text-sm text-gray-500">No user labels found. Create labels first.</div>
+                <div className="text-sm text-google-text-secondary">No user labels found. Create labels first.</div>
               )}
             </div>
 
@@ -257,61 +257,61 @@ export function AIPage({ status, onStatusChange }: Props) {
               <button
                 onClick={handleSaveDescriptions}
                 disabled={savingDescriptions || dirtyDescriptionIds.length === 0}
-                className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition-colors"
+                className="px-4 py-2 text-sm font-medium rounded-lg bg-google-blue text-white hover:bg-google-blue-hover disabled:opacity-50 transition-colors"
               >
                 {savingDescriptions ? "Saving..." : "Save Label Context"}
               </button>
-              {descriptionsSaved && <span className="text-sm text-green-600">Label context saved</span>}
+              {descriptionsSaved && <span className="text-sm text-google-green">Label context saved</span>}
             </div>
           </>
         )}
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-gray-900">Historical Classification</h2>
-        <p className="text-sm text-gray-500">
+      <div className="bg-white rounded-2xl border border-google-border shadow-sm p-6 space-y-4">
+        <h2 className="text-lg font-semibold text-google-text">Historical Classification</h2>
+        <p className="text-sm text-google-text-secondary">
           Run rules (and optionally AI fallback) across read and unread emails in Primary inbox only.
           Each run is capped at 50 messages.
         </p>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">From Date</label>
+            <label className="block text-sm font-medium text-google-text-secondary mb-1">From Date</label>
             <input
               type="date"
               value={retroFrom}
               onChange={(e) => setRetroFrom(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">To Date</label>
+            <label className="block text-sm font-medium text-google-text-secondary mb-1">To Date</label>
             <input
               type="date"
               value={retroTo}
               onChange={(e) => setRetroTo(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Messages per run (1-50)</label>
+            <label className="block text-sm font-medium text-google-text-secondary mb-1">Messages per run (1-50)</label>
             <input
               type="number"
               min={1}
               max={50}
               value={retroMaxMessages}
               onChange={(e) => setRetroMaxMessages(Number(e.target.value))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
             />
           </div>
         </div>
 
-        <label className="flex items-center gap-2 text-sm text-gray-700">
+        <label className="flex items-center gap-2 text-sm text-google-text-secondary">
           <input
             type="checkbox"
             checked={retroUseAi}
             onChange={(e) => setRetroUseAi(e.target.checked)}
-            className="rounded border-gray-300"
+            className="rounded border-google-border"
           />
           Enable AI fallback (requires AI to be configured)
         </label>
@@ -319,13 +319,13 @@ export function AIPage({ status, onStatusChange }: Props) {
         <button
           onClick={handleRetroactive}
           disabled={retroRunning || !retroFrom || !retroTo}
-          className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition-colors"
+          className="px-4 py-2 text-sm font-medium rounded-lg bg-google-blue text-white hover:bg-google-blue-hover disabled:opacity-50 transition-colors"
         >
           {retroRunning ? "Running..." : "Run Historical Classification"}
         </button>
 
         {retroResult && (
-          <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-800 space-y-1">
+          <div className="bg-google-green-light border border-google-green/20 rounded-lg px-4 py-3 text-sm text-google-green space-y-1">
             <div>Processed: {retroResult.total_processed} emails</div>
             <div>Rule matched: {retroResult.rule_matched}</div>
             <div>AI classified: {retroResult.ai_classified}</div>
