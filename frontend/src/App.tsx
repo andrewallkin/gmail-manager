@@ -25,6 +25,8 @@ export default function App() {
 
   useEffect(() => {
     loadStatus();
+    const interval = setInterval(loadStatus, 30_000);
+    return () => clearInterval(interval);
   }, [loadStatus]);
 
   useEffect(() => {
