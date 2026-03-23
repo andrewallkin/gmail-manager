@@ -84,6 +84,22 @@ export function Layout({ status, onLogout }: LayoutProps) {
         </div>
       </header>
 
+      {status.google_auth_broken && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-4">
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <span>
+              Google connection expired. Please re-connect to resume email processing.
+            </span>
+            <a
+              href="/api/auth/google/connect"
+              className="shrink-0 rounded-md bg-google-blue px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-600 transition-colors"
+            >
+              Re-connect Google
+            </a>
+          </div>
+        </div>
+      )}
+
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
         <Outlet />
       </main>

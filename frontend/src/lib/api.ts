@@ -23,6 +23,7 @@ export type Status = {
   auto_remove_inbox_labeled_read: boolean;
   polling_enabled: boolean;
   polling_interval_minutes: number;
+  google_auth_broken: boolean;
 };
 
 export type LabelItem = {

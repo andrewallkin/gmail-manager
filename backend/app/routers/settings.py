@@ -23,6 +23,7 @@ class SettingsOut(BaseModel):
     auto_remove_inbox_labeled_read: bool
     polling_enabled: bool
     polling_interval_minutes: int
+    google_auth_broken: bool
 
     model_config = {"from_attributes": True}
 
@@ -61,6 +62,7 @@ def _settings_out(user: User) -> SettingsOut:
         auto_remove_inbox_labeled_read=user.auto_remove_inbox_labeled_read,
         polling_enabled=user.polling_enabled,
         polling_interval_minutes=user.polling_interval_minutes,
+        google_auth_broken=user.google_auth_broken,
     )
 
 

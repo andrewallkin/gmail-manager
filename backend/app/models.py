@@ -24,6 +24,7 @@ class User(Base):
     last_history_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     polling_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     polling_interval_minutes: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    google_auth_broken: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
