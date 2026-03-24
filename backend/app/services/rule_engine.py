@@ -1,10 +1,12 @@
 import logging
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Label, Rule, User
 from app.services.gmail_service import GmailService
+from app.services.query_utils import build_or_term, split_comma_values
 
 log = logging.getLogger("rules")
 
@@ -16,16 +18,21 @@ CATEGORY_LABELS = {
 }
 
 
-def build_rule_query(rule: Rule, db: Session) -> str:
+def _to_gmail_label_term(label_name: str) -> str:
+    """Normalize label names for Gmail query terms."""
+    return label_name.replace(" ", "-")
+
+
+def build_rule_query(rule: Rule, db: Session, exclude_action_label: bool = False) -> str:
     """Build Gmail search query from rule criteria + scope."""
     query_parts: list[str] = []
 
     if rule.match_from:
-        query_parts.append(f"from:{rule.match_from}")
+        query_parts.append(build_or_term("from", rule.match_from))
     if rule.match_to:
-        query_parts.append(f"to:{rule.match_to}")
+        query_parts.append(build_or_term("to", rule.match_to))
     if rule.match_subject:
-        query_parts.append(f"subject:{rule.match_subject}")
+        query_parts.append(build_or_term("subject", rule.match_subject))
     if rule.match_has_words:
         query_parts.append(rule.match_has_words)
     if rule.match_doesnt_have:
@@ -33,25 +40,17 @@ def build_rule_query(rule: Rule, db: Session) -> str:
     if rule.match_label_id:
         label = db.scalar(select(Label).where(Label.id == rule.match_label_id).limit(1))
         if label:
-            query_parts.append(f"label:{label.name.replace(' ', '-')}")
+            query_parts.append(f"label:{_to_gmail_label_term(label.name)}")
+
+    if exclude_action_label and rule.action_label_id:
+        action_label = db.scalar(select(Label).where(Label.id == rule.action_label_id).limit(1))
+        if action_label:
+            query_parts.append(f"-label:{_to_gmail_label_term(action_label.name)}")
 
     # Scope filtering
-    scopes = []
-    if rule.scope_promotions:
-        scopes.append("category:promotions")
-    if rule.scope_social:
-        scopes.append("category:social")
-    if rule.scope_updates:
-        scopes.append("category:updates")
-    if rule.scope_forums:
-        scopes.append("category:forums")
-
-    if scopes:
-        # Match any of the selected categories
-        scope_query = " OR ".join(scopes)
-        query_parts.append(f"({scope_query})")
+    if rule.scope == "all_inbox":
+        query_parts.append("in:inbox")
     else:
-        # No scope = Primary inbox only
         query_parts.append("in:inbox -category:promotions -category:social -category:updates -category:forums")
 
     return " ".join(query_parts)
@@ -63,6 +62,8 @@ def apply_rule_actions(
     gmail: GmailService,
     user: User,
     db: Session,
+    message_details_by_id: dict[str, dict] | None = None,
+    skip_mark_read: bool = False,
 ) -> int:
     """Apply label/archive/delete/mark_read actions to messages. Returns count processed."""
     if not msg_ids:
@@ -71,6 +72,7 @@ def apply_rule_actions(
     add_labels: list[str] = []
     remove_labels: list[str] = []
 
+    action_label = None
     if rule.action_label_id:
         action_label = db.scalar(select(Label).where(Label.id == rule.action_label_id).limit(1))
         if action_label:
@@ -79,7 +81,7 @@ def apply_rule_actions(
     if rule.action_archive:
         remove_labels.append("INBOX")
 
-    if rule.action_mark_read:
+    if rule.action_mark_read and not skip_mark_read:
         remove_labels.append("UNREAD")
 
     if rule.action_delete:
@@ -91,6 +93,11 @@ def apply_rule_actions(
             remove_labels=remove_labels or None,
         )
 
+    # Update rule stats
+    rule.total_matched += len(msg_ids)
+    rule.last_matched_at = datetime.utcnow()
+    db.commit()
+
     return len(msg_ids)
 
 
@@ -101,10 +108,14 @@ def message_matches_rule(rule: Rule, details: dict, db: Session) -> bool:
     body = details.get("body", "").lower()
     label_ids = details.get("label_ids", [])
 
-    if rule.match_from and rule.match_from.lower() not in sender:
-        return False
-    if rule.match_subject and rule.match_subject.lower() not in subject:
-        return False
+    if rule.match_from:
+        values = split_comma_values(rule.match_from)
+        if not any(v.lower() in sender for v in values):
+            return False
+    if rule.match_subject:
+        values = split_comma_values(rule.match_subject)
+        if not any(v.lower() in subject for v in values):
+            return False
     if rule.match_has_words:
         words = rule.match_has_words.lower()
         if words not in subject and words not in body:
@@ -119,21 +130,12 @@ def message_matches_rule(rule: Rule, details: dict, db: Session) -> bool:
             return False
 
     # Scope check
-    scopes = []
-    if rule.scope_promotions:
-        scopes.append("CATEGORY_PROMOTIONS")
-    if rule.scope_social:
-        scopes.append("CATEGORY_SOCIAL")
-    if rule.scope_updates:
-        scopes.append("CATEGORY_UPDATES")
-    if rule.scope_forums:
-        scopes.append("CATEGORY_FORUMS")
-
-    if scopes:
-        if not any(s in label_ids for s in scopes):
+    if rule.scope == "all_inbox":
+        if "INBOX" not in label_ids:
             return False
     else:
-        # Primary only: reject if message has any category label
+        if "INBOX" not in label_ids:
+            return False
         category_ids = set(CATEGORY_LABELS.values())
         if any(lid in category_ids for lid in label_ids):
             return False

@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -8,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.deps import require_jwt_user
 from app.models import Rule, User
-from app.services.gmail_service import GmailService
+from app.services.gmail_service import GmailService, parse_message_details
 from app.services.rule_engine import build_rule_query, apply_rule_actions
 
 router = APIRouter(prefix="/api/rules", tags=["rules"])
@@ -28,13 +29,10 @@ class RuleCreate(BaseModel):
     action_archive: bool = False
     action_delete: bool = False
     action_mark_read: bool = False
-    action_delete_after_days: int | None = None
-    scope_promotions: bool = False
-    scope_social: bool = False
-    scope_updates: bool = False
-    scope_forums: bool = False
+    scope: str = "primary"
     use_ai: bool = False
     ai_prompt: str | None = None
+    priority: int = 0
 
 
 class RuleUpdate(RuleCreate):
@@ -55,17 +53,26 @@ class RuleOut(BaseModel):
     action_archive: bool
     action_delete: bool
     action_mark_read: bool
-    action_delete_after_days: int | None
-    scope_promotions: bool
-    scope_social: bool
-    scope_updates: bool
-    scope_forums: bool
+    scope: str
     use_ai: bool
     ai_prompt: str | None
-    created_at: str
-    updated_at: str
+    priority: int
+    total_matched: int
+    last_matched_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ReorderRequest(BaseModel):
+    rule_ids: list[int]
+
+
+class PreviewOut(BaseModel):
+    estimated_count: int
+    query: str
+    sample_subjects: list[str]
 
 
 @router.get("")
@@ -73,7 +80,11 @@ def list_rules(
     db: Session = Depends(get_db),
     user: User = Depends(require_jwt_user),
 ) -> list[RuleOut]:
-    rules = db.scalars(select(Rule).where(Rule.user_id == user.id).order_by(Rule.created_at.desc())).all()
+    rules = db.scalars(
+        select(Rule)
+        .where(Rule.user_id == user.id)
+        .order_by(Rule.priority.asc(), Rule.created_at.asc())
+    ).all()
     return [RuleOut.model_validate(r) for r in rules]
 
 
@@ -89,6 +100,62 @@ def create_rule(
     db.refresh(rule)
     log.info("Created rule '%s' for user=%s", body.name, user.email)
     return RuleOut.model_validate(rule)
+
+
+@router.put("/reorder")
+def reorder_rules(
+    body: ReorderRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_jwt_user),
+) -> dict:
+    rules = db.scalars(select(Rule).where(Rule.user_id == user.id)).all()
+    rule_map = {r.id: r for r in rules}
+    for idx, rule_id in enumerate(body.rule_ids):
+        if rule_id in rule_map:
+            rule_map[rule_id].priority = idx
+    db.commit()
+    return {"reordered": True}
+
+
+@router.post("/preview")
+def preview_rule(
+    body: RuleCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_jwt_user),
+) -> PreviewOut:
+    # Create a temporary Rule-like object for build_rule_query
+    temp_rule = Rule(user_id=user.id, **body.model_dump())
+    query = build_rule_query(temp_rule, db, exclude_action_label=True)
+    if not query:
+        return PreviewOut(estimated_count=0, query="", sample_subjects=[])
+
+    gmail = GmailService(db)
+    result = gmail.list_messages(user, query=query, max_results=100)
+    messages = result.get("messages", [])
+    estimated_count = len(messages)
+    page_token = result.get("nextPageToken")
+
+    while page_token:
+        result = gmail.list_messages(user, query=query, max_results=500, page_token=page_token)
+        page_messages = result.get("messages", [])
+        estimated_count += len(page_messages)
+        page_token = result.get("nextPageToken")
+
+    # Fetch subjects of first 5 matches
+    sample_subjects: list[str] = []
+    for msg in messages[:5]:
+        try:
+            raw = gmail.get_message(user, msg["id"])
+            details = parse_message_details(raw)
+            sample_subjects.append(details.get("subject", "(no subject)"))
+        except Exception:
+            pass
+
+    return PreviewOut(
+        estimated_count=estimated_count,
+        query=query,
+        sample_subjects=sample_subjects,
+    )
 
 
 @router.put("/{rule_id}")
@@ -134,19 +201,41 @@ def run_rule(
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
 
-    query = build_rule_query(rule, db)
+    query = build_rule_query(rule, db, exclude_action_label=True)
     if not query:
         raise HTTPException(status_code=400, detail="Rule has no match criteria")
 
     gmail = GmailService(db)
-    result = gmail.list_messages(user, query=query, max_results=100)
-    messages = result.get("messages", [])
+    matched = 0
+    processed = 0
+    pages_scanned = 0
+    page_token = None
 
-    if not messages:
-        return {"matched": 0, "processed": 0}
+    while True:
+        result = gmail.list_messages(user, query=query, max_results=100, page_token=page_token)
+        pages_scanned += 1
+        messages = result.get("messages", [])
+        if not messages:
+            break
 
-    msg_ids = [m["id"] for m in messages]
-    processed = apply_rule_actions(rule, msg_ids, gmail, user, db)
+        msg_ids = [m["id"] for m in messages]
+        matched += len(messages)
+        processed += apply_rule_actions(rule, msg_ids, gmail, user, db)
 
-    log.info("Ran rule '%s': matched=%d processed=%d", rule.name, len(messages), processed)
-    return {"matched": len(messages), "processed": processed}
+        page_token = result.get("nextPageToken")
+        if not page_token:
+            break
+
+    log.info(
+        "Ran rule '%s': matched=%d processed=%d pages=%d",
+        rule.name,
+        matched,
+        processed,
+        pages_scanned,
+    )
+    return {
+        "matched": matched,
+        "processed": processed,
+        "query": query,
+        "pages_scanned": pages_scanned,
+    }

@@ -20,8 +20,10 @@ export type Status = {
   profile_picture_url: string | null;
   ai_enabled: boolean;
   ai_provider: string | null;
+  auto_remove_inbox_labeled_read: boolean;
   polling_enabled: boolean;
   polling_interval_minutes: number;
+  google_auth_broken: boolean;
 };
 
 export type LabelItem = {
@@ -31,6 +33,8 @@ export type LabelItem = {
   label_type: string;
   color_bg: string | null;
   color_text: string | null;
+  ai_description: string | null;
+  retention_days: number | null;
   message_count: number;
   unread_count: number;
   synced_at: string | null;
@@ -50,13 +54,12 @@ export type RuleItem = {
   action_archive: boolean;
   action_delete: boolean;
   action_mark_read: boolean;
-  action_delete_after_days: number | null;
-  scope_promotions: boolean;
-  scope_social: boolean;
-  scope_updates: boolean;
-  scope_forums: boolean;
+  scope: "primary" | "all_inbox";
   use_ai: boolean;
   ai_prompt: string | null;
+  priority: number;
+  total_matched: number;
+  last_matched_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -74,18 +77,17 @@ export type RuleCreate = {
   action_archive?: boolean;
   action_delete?: boolean;
   action_mark_read?: boolean;
-  action_delete_after_days?: number | null;
-  scope_promotions?: boolean;
-  scope_social?: boolean;
-  scope_updates?: boolean;
-  scope_forums?: boolean;
+  scope?: "primary" | "all_inbox";
   use_ai?: boolean;
   ai_prompt?: string | null;
+  priority?: number;
 };
 
 export type CleanupItem = {
   id: number;
   label_filter: string | null;
+  sender_filter: string | null;
+  subject_filter: string | null;
   date_from: string | null;
   date_to: string | null;
   action: string;
@@ -96,10 +98,23 @@ export type CleanupItem = {
   completed_at: string | null;
 };
 
+export type PreviewMessageSummary = {
+  message_id: string;
+  sender: string;
+  subject: string;
+  date: string;
+};
+
+export type CleanupPreviewResult = {
+  total_count: number;
+  messages: PreviewMessageSummary[];
+};
+
 export type SettingsUpdate = {
   ai_enabled?: boolean;
   ai_provider?: string | null;
   ai_api_key?: string | null;
+  auto_remove_inbox_labeled_read?: boolean;
   polling_enabled?: boolean;
   polling_interval_minutes?: number;
 };
@@ -112,6 +127,16 @@ export type RetentionItem = {
 
 export type RetentionData = {
   items: RetentionItem[];
+};
+
+export type RestoreManifestItem = {
+  name: string;
+  created_at: string | null;
+  query: string | null;
+  messages_seen: number;
+  messages_restored: number;
+  errors: number;
+  rolled_back: boolean;
 };
 
 // --- Helpers ---
@@ -215,7 +240,10 @@ export async function createLabel(name: string, bg_color?: string, text_color?: 
   return postJson("/labels", { name, bg_color, text_color });
 }
 
-export async function updateLabel(id: number, body: { name?: string; bg_color?: string; text_color?: string }): Promise<LabelItem> {
+export async function updateLabel(
+  id: number,
+  body: { name?: string; bg_color?: string; text_color?: string; ai_description?: string; retention_days?: number | null }
+): Promise<LabelItem> {
   return patchJson(`/labels/${id}`, body);
 }
 
@@ -241,14 +269,32 @@ export async function deleteRule(id: number): Promise<void> {
   await deleteReq(`/rules/${id}`);
 }
 
-export async function runRule(id: number): Promise<{ matched: number; processed: number }> {
+export async function runRule(
+  id: number
+): Promise<{ matched: number; processed: number; query: string; pages_scanned: number }> {
   return postJson(`/rules/${id}/run`);
+}
+
+export async function reorderRules(ruleIds: number[]): Promise<{ reordered: boolean }> {
+  return putJson("/rules/reorder", { rule_ids: ruleIds });
+}
+
+export type PreviewResult = {
+  estimated_count: number;
+  query: string;
+  sample_subjects: string[];
+};
+
+export async function previewRule(rule: RuleCreate): Promise<PreviewResult> {
+  return postJson("/rules/preview", rule);
 }
 
 // --- Cleanup ---
 
 export async function startCleanup(body: {
   label_filter?: string;
+  sender_filter?: string;
+  subject_filter?: string;
   date_from?: string;
   date_to?: string;
   action: string;
@@ -262,9 +308,11 @@ export async function fetchCleanups(): Promise<CleanupItem[]> {
 
 export async function previewCleanup(body: {
   label_filter?: string;
+  sender_filter?: string;
+  subject_filter?: string;
   date_from?: string;
   date_to?: string;
-}): Promise<{ estimated_count: number }> {
+}): Promise<CleanupPreviewResult> {
   return postJson("/cleanup/preview", body);
 }
 
@@ -272,13 +320,52 @@ export async function retroactiveClassification(body: {
   date_from: string;
   date_to: string;
   use_ai?: boolean;
+  max_messages?: number;
 }): Promise<{
   total_processed: number;
   rule_matched: number;
   ai_classified: number;
-  skipped_unread: number;
+  max_messages: number;
 }> {
   return postJson("/cleanup/retroactive", body);
+}
+
+// --- Restore (temporary) ---
+
+export async function previewRestore(body: {
+  query?: string;
+}): Promise<{ query: string; estimated_count: number; pages_scanned: number }> {
+  return postJson("/restore/preview", body);
+}
+
+export async function runRestore(body: {
+  query?: string;
+  batch_size?: number;
+}): Promise<{
+  manifest_name: string;
+  query: string;
+  pages_scanned: number;
+  messages_seen: number;
+  messages_restored: number;
+  errors: number;
+}> {
+  return postJson("/restore/run", body);
+}
+
+export async function rollbackRestore(body: {
+  manifest_name: string;
+  batch_size?: number;
+}): Promise<{
+  manifest_name: string;
+  target_count: number;
+  rolled_back_count: number;
+  errors: number;
+}> {
+  return postJson("/restore/rollback", body);
+}
+
+export async function fetchRestoreManifests(): Promise<{ items: RestoreManifestItem[] }> {
+  return getJson("/restore/manifests");
 }
 
 // --- Settings ---

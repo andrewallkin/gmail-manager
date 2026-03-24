@@ -193,6 +193,29 @@ class GmailService:
         for msg_id in msg_ids:
             self.trash_message(user, msg_id)
 
+    def get_message_metadata(self, user: User, msg_id: str) -> dict:
+        """Fetch message with metadata format, returning sender/subject/date."""
+        resp = httpx.get(
+            f"{GMAIL_API_BASE}/messages/{msg_id}",
+            headers=self._headers(user),
+            params={
+                "format": "metadata",
+                "metadataHeaders": ["From", "Subject", "Date"],
+            },
+            timeout=20,
+        )
+        resp.raise_for_status()
+        raw = resp.json()
+        headers = {}
+        for h in raw.get("payload", {}).get("headers", []):
+            headers[h["name"].lower()] = h["value"]
+        return {
+            "message_id": msg_id,
+            "sender": headers.get("from", ""),
+            "subject": headers.get("subject", ""),
+            "date": headers.get("date", ""),
+        }
+
     def get_message(self, user: User, msg_id: str, fmt: str = "full") -> dict:
         resp = httpx.get(
             f"{GMAIL_API_BASE}/messages/{msg_id}",
@@ -212,14 +235,25 @@ class GmailService:
         resp.raise_for_status()
         return resp.json()
 
-    def history_list(self, user: User, start_history_id: str) -> dict:
+    def history_list(
+        self,
+        user: User,
+        start_history_id: str,
+        page_token: str | None = None,
+        max_results: int | None = None,
+    ) -> dict:
+        params: dict[str, str | int] = {
+            "startHistoryId": start_history_id,
+            "historyTypes": "messageAdded",
+        }
+        if page_token:
+            params["pageToken"] = page_token
+        if max_results is not None:
+            params["maxResults"] = max_results
         resp = httpx.get(
             f"{GMAIL_API_BASE}/history",
             headers=self._headers(user),
-            params={
-                "startHistoryId": start_history_id,
-                "historyTypes": "messageAdded",
-            },
+            params=params,
             timeout=30,
         )
         resp.raise_for_status()

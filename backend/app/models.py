@@ -20,9 +20,11 @@ class User(Base):
     ai_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ai_provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
     ai_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    auto_remove_inbox_labeled_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     last_history_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     polling_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     polling_interval_minutes: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    google_auth_broken: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
@@ -39,8 +41,10 @@ class Label(Base):
     label_type: Mapped[str] = mapped_column(String(32), default="user", nullable=False)
     color_bg: Mapped[str | None] = mapped_column(String(32), nullable=True)
     color_text: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ai_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     message_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     unread_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
@@ -61,13 +65,12 @@ class Rule(Base):
     action_archive: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     action_delete: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     action_mark_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    action_delete_after_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    scope_promotions: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    scope_social: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    scope_updates: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    scope_forums: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    scope: Mapped[str] = mapped_column(String(16), default="primary", nullable=False)
     use_ai: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ai_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_matched: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_matched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
@@ -82,6 +85,8 @@ class CleanupJob(Base):
     label_filter: Mapped[str | None] = mapped_column(String(255), nullable=True)
     date_from: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     date_to: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sender_filter: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    subject_filter: Mapped[str | None] = mapped_column(String(255), nullable=True)
     action: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
     total_messages: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

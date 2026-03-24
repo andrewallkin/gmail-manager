@@ -4,7 +4,7 @@ from urllib.parse import urlencode
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -75,9 +75,15 @@ class GoogleService:
         google_id = user_info["id"]
         user = db.scalar(select(User).where(User.google_id == google_id).limit(1))
         if not user:
+            # Single-user mode: reconnect should reuse the same local user row.
+            user = db.scalar(
+                select(User).where(func.lower(User.email) == email.lower()).limit(1)
+            )
+        if not user:
             user = User(google_id=google_id)
             db.add(user)
 
+        user.google_id = google_id
         user.email = email
         user.display_name = user_info.get("name")
         user.profile_picture_url = user_info.get("picture")
@@ -85,6 +91,8 @@ class GoogleService:
         if refresh_token:
             user.refresh_token = refresh_token
         user.token_expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+
+        user.google_auth_broken = False
 
         db.commit()
         db.refresh(user)
@@ -111,6 +119,15 @@ class GoogleService:
             },
             timeout=20,
         )
+        if resp.status_code == 400:
+            log.warning("Google refresh token expired/revoked for user=%s", user.email)
+            user.google_auth_broken = True
+            user.polling_enabled = False
+            db.commit()
+            raise HTTPException(
+                status_code=401,
+                detail="Google connection expired. Please re-connect your Google account.",
+            )
         resp.raise_for_status()
         data = resp.json()
 

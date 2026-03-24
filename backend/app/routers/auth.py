@@ -85,6 +85,8 @@ def disconnect_google(
     user.access_token = None
     user.refresh_token = None
     user.token_expiry = None
+    user.polling_enabled = False
+    user.last_history_id = None
     log.info("Google disconnected | user=%s", user_name)
     db.commit()
     jwt_service = JwtService()

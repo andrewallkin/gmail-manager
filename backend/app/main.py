@@ -57,6 +57,7 @@ app = FastAPI(title="Gmail Manager", lifespan=lifespan)
 from app.routers.auth import logout_router, router as auth_router
 from app.routers.cleanup import router as cleanup_router
 from app.routers.labels import router as labels_router
+from app.routers.restore import router as restore_router
 from app.routers.rules import router as rules_router
 from app.routers.settings import router as settings_router
 
@@ -65,6 +66,7 @@ app.include_router(logout_router)
 app.include_router(labels_router)
 app.include_router(rules_router)
 app.include_router(cleanup_router)
+app.include_router(restore_router)
 app.include_router(settings_router)
 
 
