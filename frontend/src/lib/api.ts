@@ -45,6 +45,7 @@ export type RuleItem = {
   name: string;
   enabled: boolean;
   match_from: string | null;
+  match_from_exclude: string | null;
   match_to: string | null;
   match_subject: string | null;
   match_has_words: string | null;
@@ -68,6 +69,7 @@ export type RuleCreate = {
   name: string;
   enabled?: boolean;
   match_from?: string | null;
+  match_from_exclude?: string | null;
   match_to?: string | null;
   match_subject?: string | null;
   match_has_words?: string | null;

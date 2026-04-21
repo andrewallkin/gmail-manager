@@ -20,6 +20,7 @@ class RuleCreate(BaseModel):
     name: str
     enabled: bool = True
     match_from: str | None = None
+    match_from_exclude: str | None = None
     match_to: str | None = None
     match_subject: str | None = None
     match_has_words: str | None = None
@@ -44,6 +45,7 @@ class RuleOut(BaseModel):
     name: str
     enabled: bool
     match_from: str | None
+    match_from_exclude: str | None
     match_to: str | None
     match_subject: str | None
     match_has_words: str | None

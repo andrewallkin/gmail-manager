@@ -12,6 +12,7 @@ from app.routers.auth import disconnect_google
 from app.routers import rules as rules_router
 from app.services.google_service import GoogleService
 from app.services import poller
+from app.services.rule_engine import message_matches_rule
 
 
 def _make_db() -> Session:
@@ -468,6 +469,99 @@ def test_run_rule_excludes_action_label_from_query(monkeypatch) -> None:
     assert modified_add_labels == [["Label_42"]]
     assert result["matched"] == 1
     assert result["processed"] == 1
+
+
+def test_run_rule_includes_excluded_sender_query_terms(monkeypatch) -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    rule = Rule(
+        user_id=user.id,
+        name="Exclude noisy senders",
+        match_from="news@dailymaverick.co.za",
+        match_from_exclude="noreply@dailymaverick.co.za, digest@dailymaverick.co.za",
+    )
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+
+    seen_queries: list[str] = []
+
+    class _FakeGmailService:
+        def __init__(self, _db: Session) -> None:
+            pass
+
+        def list_messages(
+            self,
+            _user: User,
+            query: str = "",
+            max_results: int = 100,
+            page_token: str | None = None,
+        ) -> dict:
+            assert max_results == 100
+            assert page_token is None
+            seen_queries.append(query)
+            return {"messages": []}
+
+    monkeypatch.setattr(rules_router, "GmailService", _FakeGmailService)
+    result = rules_router.run_rule(rule.id, db=db, user=user)
+
+    assert len(seen_queries) == 1
+    assert "from:news@dailymaverick.co.za" in seen_queries[0]
+    assert "-from:(noreply@dailymaverick.co.za OR digest@dailymaverick.co.za)" in seen_queries[0]
+    assert result["matched"] == 0
+    assert result["processed"] == 0
+
+
+def test_message_matches_rule_excludes_sender_substring() -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    rule = Rule(
+        user_id=user.id,
+        name="Exclude sender substring",
+        match_from="example.com",
+        match_from_exclude="noreply",
+        scope="all_inbox",
+    )
+    db.add(rule)
+    db.commit()
+
+    excluded_details = {
+        "from": "NoReply <noreply@example.com>",
+        "subject": "Newsletter",
+        "body": "Body",
+        "label_ids": ["INBOX"],
+    }
+    allowed_details = {
+        "from": "Team <team@example.com>",
+        "subject": "Newsletter",
+        "body": "Body",
+        "label_ids": ["INBOX"],
+    }
+
+    assert message_matches_rule(rule, excluded_details, db) is False
+    assert message_matches_rule(rule, allowed_details, db) is True
 
 
 def test_retention_cleanup_paginates_all_pages() -> None:

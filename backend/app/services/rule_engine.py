@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Label, Rule, User
 from app.services.gmail_service import GmailService
-from app.services.query_utils import build_or_term, split_comma_values
+from app.services.query_utils import build_negated_or_term, build_or_term, split_comma_values
 
 log = logging.getLogger("rules")
 
@@ -29,6 +29,8 @@ def build_rule_query(rule: Rule, db: Session, exclude_action_label: bool = False
 
     if rule.match_from:
         query_parts.append(build_or_term("from", rule.match_from))
+    if rule.match_from_exclude:
+        query_parts.append(build_negated_or_term("from", rule.match_from_exclude))
     if rule.match_to:
         query_parts.append(build_or_term("to", rule.match_to))
     if rule.match_subject:
@@ -111,6 +113,10 @@ def message_matches_rule(rule: Rule, details: dict, db: Session) -> bool:
     if rule.match_from:
         values = split_comma_values(rule.match_from)
         if not any(v.lower() in sender for v in values):
+            return False
+    if rule.match_from_exclude:
+        values = split_comma_values(rule.match_from_exclude)
+        if any(v.lower() in sender for v in values):
             return False
     if rule.match_subject:
         values = split_comma_values(rule.match_subject)

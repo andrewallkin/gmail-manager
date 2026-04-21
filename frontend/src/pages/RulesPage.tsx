@@ -11,6 +11,7 @@ const emptyRule: RuleCreate = {
   name: "",
   enabled: true,
   match_from: null,
+  match_from_exclude: null,
   match_to: null,
   match_subject: null,
   match_has_words: null,
@@ -177,6 +178,7 @@ export function RulesPage() {
       name: rule.name,
       enabled: rule.enabled,
       match_from: rule.match_from,
+      match_from_exclude: rule.match_from_exclude,
       match_to: rule.match_to,
       match_subject: rule.match_subject,
       match_has_words: rule.match_has_words,
@@ -358,6 +360,17 @@ export function RulesPage() {
               className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
             />
             <p className="text-xs text-google-text-tertiary mt-1">Separate multiple values with commas (OR logic)</p>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-google-text-secondary mb-1">From excludes (email/domain)</label>
+            <input
+              type="text"
+              value={form.match_from_exclude ?? ""}
+              onChange={(e) => updateField("match_from_exclude", e.target.value || null)}
+              placeholder="e.g., noreply@example.com, alerts@vendor.com"
+              className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
+            />
+            <p className="text-xs text-google-text-tertiary mt-1">Separate multiple values with commas (exclude if any value matches)</p>
           </div>
           <div>
             <label className="block text-xs font-medium text-google-text-secondary mb-1">To (recipient)</label>
@@ -616,6 +629,7 @@ export function RulesPage() {
                     </div>
                     <div className="mt-2 text-xs text-google-text-secondary space-y-1">
                       {rule.match_from && <div>From: {rule.match_from}</div>}
+                      {rule.match_from_exclude && <div>From excludes: {rule.match_from_exclude}</div>}
                       {rule.match_to && <div>To: {rule.match_to}</div>}
                       {rule.match_subject && <div>Subject: {rule.match_subject}</div>}
                       {rule.match_has_words && <div>Words: {rule.match_has_words}</div>}

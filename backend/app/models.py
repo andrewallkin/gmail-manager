@@ -56,6 +56,7 @@ class Rule(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     match_from: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    match_from_exclude: Mapped[str | None] = mapped_column(String(255), nullable=True)
     match_to: Mapped[str | None] = mapped_column(String(255), nullable=True)
     match_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
     match_has_words: Mapped[str | None] = mapped_column(Text, nullable=True)
