@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+from typing import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -103,9 +104,43 @@ def apply_rule_actions(
     return len(msg_ids)
 
 
+def apply_matching_rules(
+    rules: Sequence[Rule],
+    msg_id: str,
+    details: dict,
+    gmail: GmailService,
+    user: User,
+    db: Session,
+) -> list[int]:
+    """Apply all matching rules in priority order until a stop_on_match rule is hit."""
+    matched_rule_ids: list[int] = []
+    skip_mark_read = details.get("is_unread", False)
+
+    for rule in rules:
+        if not message_matches_rule(rule, details, db):
+            continue
+
+        apply_rule_actions(
+            rule,
+            [msg_id],
+            gmail,
+            user,
+            db,
+            message_details_by_id={msg_id: details},
+            skip_mark_read=skip_mark_read and rule.action_mark_read,
+        )
+        matched_rule_ids.append(rule.id)
+
+        if rule.stop_on_match:
+            break
+
+    return matched_rule_ids
+
+
 def message_matches_rule(rule: Rule, details: dict, db: Session) -> bool:
     """Check if a fetched message matches rule criteria locally (for poller use)."""
     sender = details.get("from", "").lower()
+    recipient = details.get("to", "").lower()
     subject = details.get("subject", "").lower()
     body = details.get("body", "").lower()
     label_ids = details.get("label_ids", [])
@@ -117,6 +152,10 @@ def message_matches_rule(rule: Rule, details: dict, db: Session) -> bool:
     if rule.match_from_exclude:
         values = split_comma_values(rule.match_from_exclude)
         if any(v.lower() in sender for v in values):
+            return False
+    if rule.match_to:
+        values = split_comma_values(rule.match_to)
+        if not any(v.lower() in recipient for v in values):
             return False
     if rule.match_subject:
         values = split_comma_values(rule.match_subject)

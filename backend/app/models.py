@@ -66,6 +66,7 @@ class Rule(Base):
     action_archive: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     action_delete: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     action_mark_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    stop_on_match: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     scope: Mapped[str] = mapped_column(String(16), default="primary", nullable=False)
     use_ai: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ai_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)

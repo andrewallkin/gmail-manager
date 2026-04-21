@@ -12,7 +12,7 @@ from app.models import CleanupJob, Label, Rule, User
 from app.services.ai_service import AIService
 from app.services.gmail_service import GmailService, parse_message_details
 from app.services.query_utils import build_or_term
-from app.services.rule_engine import apply_rule_actions, message_matches_rule
+from app.services.rule_engine import apply_matching_rules
 
 router = APIRouter(prefix="/api/cleanup", tags=["cleanup"])
 log = logging.getLogger("cleanup")
@@ -142,7 +142,9 @@ def retroactive_classification(
     )
 
     rules = db.scalars(
-        select(Rule).where(Rule.user_id == user.id, Rule.enabled == True)  # noqa: E712
+        select(Rule)
+        .where(Rule.user_id == user.id, Rule.enabled == True)  # noqa: E712
+        .order_by(Rule.priority.asc(), Rule.created_at.asc())
     ).all()
 
     ai_service = None
@@ -186,22 +188,17 @@ def retroactive_classification(
 
                 total_processed += 1
 
-                # Try rules first
-                matched = False
-                for rule in rules:
-                    if message_matches_rule(rule, details, db):
-                        apply_rule_actions(
-                            rule,
-                            [msg_ref["id"]],
-                            gmail,
-                            user,
-                            db,
-                            message_details_by_id={msg_ref["id"]: details},
-                            skip_mark_read=details["is_unread"] and rule.action_mark_read,
-                        )
-                        rule_matched_count += 1
-                        matched = True
-                        break
+                matched_rule_ids = apply_matching_rules(
+                    rules,
+                    msg_ref["id"],
+                    details,
+                    gmail,
+                    user,
+                    db,
+                )
+                matched = bool(matched_rule_ids)
+                if matched:
+                    rule_matched_count += 1
 
                 # AI fallback
                 if not matched and ai_service and available_labels:

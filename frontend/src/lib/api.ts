@@ -55,6 +55,7 @@ export type RuleItem = {
   action_archive: boolean;
   action_delete: boolean;
   action_mark_read: boolean;
+  stop_on_match: boolean;
   scope: "primary" | "all_inbox";
   use_ai: boolean;
   ai_prompt: string | null;
@@ -79,6 +80,7 @@ export type RuleCreate = {
   action_archive?: boolean;
   action_delete?: boolean;
   action_mark_read?: boolean;
+  stop_on_match?: boolean;
   scope?: "primary" | "all_inbox";
   use_ai?: boolean;
   ai_prompt?: string | null;
@@ -277,7 +279,7 @@ export async function runRule(
   return postJson(`/rules/${id}/run`);
 }
 
-export async function reorderRules(ruleIds: number[]): Promise<{ reordered: boolean }> {
+export async function reorderRules(ruleIds: number[]): Promise<{ reordered: boolean; rule_ids: number[] }> {
   return putJson("/rules/reorder", { rule_ids: ruleIds });
 }
 

@@ -13,7 +13,7 @@ from app.models import Label, Rule, SystemLabelRetention, User
 from app.services.ai_service import AIService
 from app.services.gmail_service import GmailService, parse_message_details
 from app.services.inbox_rules import is_primary_inbox_message
-from app.services.rule_engine import apply_rule_actions, message_matches_rule
+from app.services.rule_engine import apply_matching_rules
 
 log = logging.getLogger("poller")
 
@@ -68,6 +68,7 @@ def _run_poll_cycle() -> None:
         users = db.scalars(
             select(User).where(
                 User.polling_enabled == True,  # noqa: E712
+                User.google_auth_broken == False,  # noqa: E712
                 User.google_id.isnot(None),
                 User.access_token.isnot(None),
                 User.refresh_token.isnot(None),
@@ -105,11 +106,11 @@ def _run_poll_cycle() -> None:
             except httpx.HTTPStatusError as exc:
                 failed_users += 1
                 if exc.response.status_code == 401:
-                    user.polling_enabled = False
+                    user.google_auth_broken = True
                     db.commit()
                     _last_poll_per_user.pop(user.id, None)
                     log.warning(
-                        "event=poll_user_failed_auth_401 cycle_id=%s user=%s user_id=%s action=disabled_polling",
+                        "event=poll_user_failed_auth_401 cycle_id=%s user=%s user_id=%s action=marked_google_auth_broken",
                         cycle_id,
                         user.email,
                         user.id,
@@ -311,33 +312,18 @@ def _poll_user(user: User, db: Session, cycle_id: str = "manual") -> None:
                 raw_msg = gmail.get_message(user, msg_id)
                 details = parse_message_details(raw_msg)
 
-                # Never mark unread emails as read - skip action_mark_read for unread
-                is_unread = details["is_unread"]
-
-                # Try rules
-                rule_matched = False
-                for rule in rules:
-                    if message_matches_rule(rule, details, db):
-                        apply_rule_actions(
-                            rule,
-                            [msg_id],
-                            gmail,
-                            user,
-                            db,
-                            message_details_by_id={msg_id: details},
-                            skip_mark_read=is_unread and rule.action_mark_read,
-                        )
-                        rule_matched = True
-                        message_rule_applied += 1
-                        log.info(
-                            "event=message_processed cycle_id=%s user=%s user_id=%s msg_id=%s outcome=rule_applied rule_id=%s",
-                            cycle_id,
-                            user.email,
-                            user.id,
-                            msg_id,
-                            rule.id,
-                        )
-                        break
+                matched_rule_ids = apply_matching_rules(rules, msg_id, details, gmail, user, db)
+                rule_matched = bool(matched_rule_ids)
+                if rule_matched:
+                    message_rule_applied += 1
+                    log.info(
+                        "event=message_processed cycle_id=%s user=%s user_id=%s msg_id=%s outcome=rule_applied rule_ids=%s",
+                        cycle_id,
+                        user.email,
+                        user.id,
+                        msg_id,
+                        ",".join(str(rule_id) for rule_id in matched_rule_ids),
+                    )
 
                 # AI classification for Primary inbox messages only
                 if not rule_matched and ai_service and available_labels:
