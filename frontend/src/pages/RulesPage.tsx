@@ -14,6 +14,7 @@ import {
   updateRule,
 } from "../lib/api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { ReorderRulesDialog } from "../components/ReorderRulesDialog";
 import { parseUtcDate } from "../lib/format";
 
 const emptyRule: RuleCreate = {
@@ -44,35 +45,6 @@ function relativeTime(dateStr: string | null): string {
   return `${Math.floor(diffHr / 24)}d ago`;
 }
 
-function GripIcon() {
-  return (
-    <svg className="w-4 h-4 text-google-text-tertiary" fill="currentColor" viewBox="0 0 24 24">
-      <circle cx="9" cy="5" r="1.5" />
-      <circle cx="15" cy="5" r="1.5" />
-      <circle cx="9" cy="12" r="1.5" />
-      <circle cx="15" cy="12" r="1.5" />
-      <circle cx="9" cy="19" r="1.5" />
-      <circle cx="15" cy="19" r="1.5" />
-    </svg>
-  );
-}
-
-function ChevronUpIcon() {
-  return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
-    </svg>
-  );
-}
-
-function ChevronDownIcon() {
-  return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-    </svg>
-  );
-}
-
 function Badge({ text, tone = "neutral" }: { text: string; tone?: "neutral" | "blue" | "green" | "red" | "yellow" | "purple" }) {
   const styles = {
     neutral: "bg-google-bg text-google-text-secondary",
@@ -99,8 +71,8 @@ export function RulesPage() {
   const [previewing, setPreviewing] = useState(false);
   const [confirmDeleteRule, setConfirmDeleteRule] = useState<RuleItem | null>(null);
   const [deletingRule, setDeletingRule] = useState(false);
-  const [dragOver, setDragOver] = useState<number | null>(null);
-  const dragItem = useRef<number | null>(null);
+  const [reorderOpen, setReorderOpen] = useState(false);
+  const [savingOrder, setSavingOrder] = useState(false);
   const runResultTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const userLabels = useMemo(
@@ -280,23 +252,14 @@ export function RulesPage() {
     }
   };
 
-  const handleDrop = async () => {
-    if (dragItem.current === null || dragOver === null || dragItem.current === dragOver) return;
-    const previous = [...rules];
-    const reordered = [...rules];
-    const [dragged] = reordered.splice(dragItem.current, 1);
-    reordered.splice(dragOver, 0, dragged);
-    dragItem.current = null;
-    setDragOver(null);
-    await persistReorder(previous, reordered);
-  };
-
-  const handleMove = async (fromIdx: number, toIdx: number) => {
-    if (toIdx < 0 || toIdx >= rules.length) return;
-    const previous = [...rules];
-    const reordered = [...rules];
-    [reordered[fromIdx], reordered[toIdx]] = [reordered[toIdx], reordered[fromIdx]];
-    await persistReorder(previous, reordered);
+  const handleSaveOrder = async (reordered: RuleItem[]) => {
+    setSavingOrder(true);
+    try {
+      await persistReorder(rules, reordered);
+      setReorderOpen(false);
+    } finally {
+      setSavingOrder(false);
+    }
   };
 
   if (loading) {
@@ -314,12 +277,21 @@ export function RulesPage() {
           <h1 className="text-2xl font-bold text-google-text">Rules</h1>
           <p className="text-sm text-google-text-secondary">Top priority runs first. Rules continue unless stop-on-match is enabled.</p>
         </div>
-        <button
-          onClick={openCreate}
-          className="px-4 py-2 text-sm font-medium rounded-lg bg-google-blue text-white hover:bg-google-blue-hover transition-colors"
-        >
-          Create Rule
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setReorderOpen(true)}
+            disabled={rules.length < 2}
+            className="px-4 py-2 text-sm font-medium rounded-lg border border-google-border text-google-text-secondary hover:bg-google-hover disabled:opacity-50 transition-colors"
+          >
+            Reorder
+          </button>
+          <button
+            onClick={openCreate}
+            className="px-4 py-2 text-sm font-medium rounded-lg bg-google-blue text-white hover:bg-google-blue-hover transition-colors"
+          >
+            Create Rule
+          </button>
+        </div>
       </div>
 
       {runResult && (
@@ -345,6 +317,14 @@ export function RulesPage() {
         onCancel={() => setConfirmDeleteRule(null)}
       />
 
+      <ReorderRulesDialog
+        open={reorderOpen}
+        rules={rules}
+        saving={savingOrder}
+        onCancel={() => setReorderOpen(false)}
+        onSave={handleSaveOrder}
+      />
+
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
         <div className="space-y-2">
           {rules.map((rule, idx) => (
@@ -352,74 +332,27 @@ export function RulesPage() {
               key={rule.id}
               type="button"
               onClick={() => setSelectedRuleId(rule.id)}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragOver(idx);
-              }}
-              onDrop={handleDrop}
-              onDragEnd={() => {
-                dragItem.current = null;
-                setDragOver(null);
-              }}
               className={`w-full text-left bg-white border rounded-xl px-3 py-3 transition-colors ${
                 selectedRuleId === rule.id ? "border-google-blue ring-2 ring-google-blue-light" : "border-google-border"
-              } ${dragOver === idx ? "bg-google-blue-light/40" : ""}`}
+              }`}
             >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-google-text-secondary">#{idx + 1}</span>
-                    <span className={`inline-block w-2 h-2 rounded-full ${rule.enabled ? "bg-google-green" : "bg-google-border"}`} />
-                    <span className="font-medium text-google-text truncate">{rule.name}</span>
-                    {rule.stop_on_match && <Badge text="Stop on match" tone="purple" />}
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {summarizeConditions(rule).map((item) => (
-                      <Badge key={item} text={item} />
-                    ))}
-                  </div>
-                  <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    {summarizeActions(rule).map((item) => (
-                      <Badge key={`${rule.id}-${item}`} text={item} tone="blue" />
-                    ))}
-                    <Badge text={rule.scope === "all_inbox" ? "All Inbox" : "Primary"} tone="purple" />
-                  </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-google-text-secondary">#{idx + 1}</span>
+                  <span className={`inline-block w-2 h-2 rounded-full ${rule.enabled ? "bg-google-green" : "bg-google-border"}`} />
+                  <span className="font-medium text-google-text truncate">{rule.name}</span>
+                  {rule.stop_on_match && <Badge text="Stop on match" tone="purple" />}
                 </div>
-                <div className="flex flex-col items-center gap-1 shrink-0">
-                  <div
-                    draggable
-                    onDragStart={() => {
-                      dragItem.current = idx;
-                    }}
-                    className="cursor-grab active:cursor-grabbing p-1"
-                    aria-label="Drag to reorder"
-                  >
-                    <GripIcon />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleMove(idx, idx - 1);
-                    }}
-                    disabled={idx === 0}
-                    className="p-1 rounded border border-google-border text-google-text-secondary hover:bg-google-hover disabled:opacity-40"
-                    title="Move up"
-                  >
-                    <ChevronUpIcon />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleMove(idx, idx + 1);
-                    }}
-                    disabled={idx === rules.length - 1}
-                    className="p-1 rounded border border-google-border text-google-text-secondary hover:bg-google-hover disabled:opacity-40"
-                    title="Move down"
-                  >
-                    <ChevronDownIcon />
-                  </button>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {summarizeConditions(rule).map((item) => (
+                    <Badge key={item} text={item} />
+                  ))}
+                </div>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {summarizeActions(rule).map((item) => (
+                    <Badge key={`${rule.id}-${item}`} text={item} tone="blue" />
+                  ))}
+                  <Badge text={rule.scope === "all_inbox" ? "All Inbox" : "Primary"} tone="purple" />
                 </div>
               </div>
             </button>
