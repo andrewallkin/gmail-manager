@@ -105,12 +105,8 @@ export function RulesPage() {
   }, [runResult]);
 
   useEffect(() => {
-    if (!selectedRuleId && rules.length > 0) {
-      setSelectedRuleId(rules[0].id);
-      return;
-    }
     if (selectedRuleId && !rules.some((rule) => rule.id === selectedRuleId)) {
-      setSelectedRuleId(rules[0]?.id ?? null);
+      setSelectedRuleId(null);
     }
   }, [rules, selectedRuleId]);
 
