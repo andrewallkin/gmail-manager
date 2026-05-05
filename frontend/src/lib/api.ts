@@ -334,6 +334,21 @@ export async function retroactiveClassification(body: {
   return postJson("/cleanup/retroactive", body);
 }
 
+export type InboxInspectorResult = {
+  gmail_query: string;
+  fetched_count: number;
+  label_map: Record<string, string>;
+  messages: unknown[];
+};
+
+export async function fetchInboxInspector(body: {
+  date_from: string;
+  date_to: string;
+  max_messages: number;
+}): Promise<InboxInspectorResult> {
+  return postJson("/debug/inbox", body);
+}
+
 // --- Restore (temporary) ---
 
 export async function previewRestore(body: {
