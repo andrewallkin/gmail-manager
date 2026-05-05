@@ -50,8 +50,11 @@ export function InboxInspectorPage() {
   const [dateTo, setDateTo] = useState(todayISODate);
   const [maxMessages, setMaxMessages] = useState(25);
   const [primaryOnly, setPrimaryOnly] = useState(false);
+  const [importantOnly, setImportantOnly] = useState(false);
   const [includeCategories, setIncludeCategories] = useState<GmailCategoryTab[]>([]);
   const [excludeCategories, setExcludeCategories] = useState<GmailCategoryTab[]>([]);
+  const [customGmailQ, setCustomGmailQ] = useState("");
+  const [mergeDatesWithCustom, setMergeDatesWithCustom] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<InboxInspectorResult | null>(null);
@@ -68,6 +71,8 @@ export function InboxInspectorPage() {
     );
   };
 
+  const usingCustomQuery = customGmailQ.trim().length > 0;
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -78,9 +83,17 @@ export function InboxInspectorPage() {
         date_from: dateFrom,
         date_to: dateTo,
         max_messages: maxMessages,
-        primary_only: primaryOnly,
-        include_categories: includeCategories.length ? includeCategories : undefined,
-        exclude_categories: excludeCategories.length ? excludeCategories : undefined,
+        ...(usingCustomQuery
+          ? {
+              custom_gmail_q: customGmailQ.trim(),
+              merge_date_range_with_custom: mergeDatesWithCustom,
+            }
+          : {
+              primary_only: primaryOnly,
+              important_only: importantOnly,
+              include_categories: includeCategories.length ? includeCategories : undefined,
+              exclude_categories: excludeCategories.length ? excludeCategories : undefined,
+            }),
       });
       setResult(data);
     } catch (err) {
@@ -93,9 +106,13 @@ export function InboxInspectorPage() {
   return (
     <div className="space-y-6">
       <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-        <strong className="font-semibold">Temporary debug tool.</strong> Fetches full Gmail API payloads for{" "}
+        <strong className="font-semibold">Temporary debug tool.</strong> Fetches full Gmail API payloads using
+        either the built-in filters or a <strong>custom Gmail search</strong> string. Default mode uses{" "}
         <code className="rounded bg-amber-100 px-1">in:inbox</code> plus your date range. Leave category filters
-        off to search the full inbox (all tabs). <strong>Primary only</strong> applies the same{" "}
+        off to search the full inbox (all tabs). <strong>Important only</strong> adds{" "}
+        <code className="rounded bg-amber-100 px-1">is:important</code> (inbox + Priority Inbox important). Each
+        row shows whether the thread has the <code className="rounded bg-amber-100 px-1">IMPORTANT</code> system
+        label. <strong>Primary only</strong> applies the same{" "}
         <code className="rounded bg-amber-100 px-1">-category:</code> rules as the Rules &quot;primary&quot;
         scope. Include = must be in at least one selected tab (OR). Exclude = must not be in that tab.
       </div>
@@ -147,15 +164,6 @@ export function InboxInspectorPage() {
               required
             />
           </label>
-          <label className="flex cursor-pointer items-center gap-2 text-sm text-google-text">
-            <input
-              type="checkbox"
-              checked={primaryOnly}
-              onChange={(ev) => setPrimaryOnly(ev.target.checked)}
-              className="rounded border-google-border"
-            />
-            <span className="font-medium">Primary only</span>
-          </label>
           <button
             type="submit"
             disabled={loading}
@@ -165,7 +173,70 @@ export function InboxInspectorPage() {
           </button>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-google-text">Custom Gmail search (optional)</label>
+          <textarea
+            value={customGmailQ}
+            onChange={(ev) => setCustomGmailQ(ev.target.value)}
+            rows={3}
+            placeholder={`e.g. label:INBOX -category:{promotions social updates}`}
+            className="w-full rounded-md border border-google-border px-3 py-2 font-mono text-sm text-google-text placeholder:text-google-text-tertiary"
+          />
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-google-text">
+            <input
+              type="checkbox"
+              checked={mergeDatesWithCustom}
+              onChange={(ev) => setMergeDatesWithCustom(ev.target.checked)}
+              disabled={!usingCustomQuery}
+              className="rounded border-google-border disabled:opacity-50"
+            />
+            <span>
+              Append <strong>From</strong> / <strong>Through</strong> dates to the custom query (
+              <code className="rounded bg-gray-100 px-1 text-xs">after:</code> /{" "}
+              <code className="rounded bg-gray-100 px-1 text-xs">before:</code> in{" "}
+              <code className="rounded bg-gray-100 px-1 text-xs">yyyy/mm/dd</code>)
+            </span>
+          </label>
+          <p className="text-xs text-google-text-secondary">
+            When this box has text, it is sent verbatim to Gmail as <code className="rounded bg-gray-100 px-1">q</code>.
+            Uncheck &quot;Append dates&quot; if your query already includes{" "}
+            <code className="rounded bg-gray-100 px-1">after:</code>/
+            <code className="rounded bg-gray-100 px-1">before:</code>.
+          </p>
+        </div>
+
+        {usingCustomQuery && (
+          <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            Custom search is active — primary, important, and category filters below are ignored.
+          </p>
+        )}
+
+        <div
+          className={`space-y-4 ${usingCustomQuery ? "pointer-events-none opacity-45" : ""}`}
+          aria-disabled={usingCustomQuery}
+        >
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-google-text">
+              <input
+                type="checkbox"
+                checked={primaryOnly}
+                onChange={(ev) => setPrimaryOnly(ev.target.checked)}
+                className="rounded border-google-border"
+              />
+              <span className="font-medium">Primary only</span>
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-google-text">
+              <input
+                type="checkbox"
+                checked={importantOnly}
+                onChange={(ev) => setImportantOnly(ev.target.checked)}
+                className="rounded border-google-border"
+              />
+              <span className="font-medium">Important only</span>
+            </label>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
           <fieldset className="rounded-md border border-google-border p-3">
             <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-google-text-secondary">
               Include categories (OR)
@@ -203,6 +274,7 @@ export function InboxInspectorPage() {
             </div>
           </fieldset>
         </div>
+        </div>
       </form>
 
       {error && (
@@ -225,6 +297,7 @@ export function InboxInspectorPage() {
               const id = msg.id ?? `row-${idx}`;
               const labelIds = msg.labelIds ?? [];
               const hasInbox = labelIds.includes("INBOX");
+              const hasImportant = labelIds.includes("IMPORTANT");
               const resolved = labelIds.map((lid) => `${lid} (${result.label_map[lid] ?? "?"})`);
               const from = headerValue(msg, "From") || "(unknown sender)";
               const subject = headerValue(msg, "Subject") || "(no subject)";
@@ -248,6 +321,15 @@ export function InboxInspectorPage() {
                           }
                         >
                           INBOX: {hasInbox ? "yes" : "no"}
+                        </span>
+                        <span
+                          className={
+                            hasImportant
+                              ? "rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900"
+                              : "rounded-full bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-700"
+                          }
+                        >
+                          IMPORTANT: {hasImportant ? "yes" : "no"}
                         </span>
                       </div>
                       <p className="mt-2 text-xs text-google-text-secondary">{resolved.join(", ") || "No labels"}</p>

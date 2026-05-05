@@ -14,6 +14,8 @@ from app.services.gmail_service import GmailService
 router = APIRouter(prefix="/api/debug", tags=["debug"])
 log = logging.getLogger("gmail")
 
+CUSTOM_GMAIL_Q_MAX_LEN = 4096
+
 GmailCategoryTab = Literal["promotions", "social", "updates", "forums"]
 _PRIMARY_TAB_EXCLUDES: tuple[GmailCategoryTab, ...] = ("promotions", "social", "updates", "forums")
 
@@ -34,6 +36,19 @@ class InboxInspectorRequest(BaseModel):
         default_factory=list,
         description="Exclude these category tabs (-category:...).",
     )
+    important_only: bool = Field(
+        default=False,
+        description="Restrict to threads Gmail marks important (adds is:important).",
+    )
+    custom_gmail_q: str | None = Field(
+        None,
+        max_length=CUSTOM_GMAIL_Q_MAX_LEN,
+        description="Raw Gmail search q; when set, structured filters below are ignored.",
+    )
+    merge_date_range_with_custom: bool = Field(
+        default=True,
+        description="Append after:/before: from date_from/date_to after custom_gmail_q.",
+    )
 
 
 def _dedupe_preserve(items: list[GmailCategoryTab]) -> list[GmailCategoryTab]:
@@ -49,11 +64,23 @@ def _format_gmail_date(d: date) -> str:
     return f"{d.year}/{d.month:02d}/{d.day:02d}"
 
 
+def _date_range_tokens(date_from: str, date_to: str) -> list[str]:
+    """after:/before: pair; end date is inclusive through date_to (before = next calendar day)."""
+    d_start = _parse_calendar_date(date_from)
+    d_end_inclusive = _parse_calendar_date(date_to)
+    d_before_exclusive = d_end_inclusive + timedelta(days=1)
+    return [
+        f"after:{_format_gmail_date(d_start)}",
+        f"before:{_format_gmail_date(d_before_exclusive)}",
+    ]
+
+
 def _build_inbox_inspector_query(
     date_from: str,
     date_to: str,
     *,
     primary_only: bool = False,
+    important_only: bool = False,
     include_categories: list[GmailCategoryTab] | None = None,
     exclude_categories: list[GmailCategoryTab] | None = None,
 ) -> str:
@@ -61,14 +88,7 @@ def _build_inbox_inspector_query(
 
     Gmail `before:` excludes its date, so we pass the day *after* the user's end date.
     """
-    d_start = _parse_calendar_date(date_from)
-    d_end_inclusive = _parse_calendar_date(date_to)
-    d_before_exclusive = d_end_inclusive + timedelta(days=1)
-    parts: list[str] = [
-        "in:inbox",
-        f"after:{_format_gmail_date(d_start)}",
-        f"before:{_format_gmail_date(d_before_exclusive)}",
-    ]
+    parts: list[str] = ["in:inbox", *_date_range_tokens(date_from, date_to)]
     inc = _dedupe_preserve(list(include_categories or []))
     exc = _dedupe_preserve(list(exclude_categories or []))
 
@@ -83,6 +103,8 @@ def _build_inbox_inspector_query(
             parts.append(f"{{{inner}}}")
     for c in exc:
         parts.append(f"-category:{c}")
+    if important_only:
+        parts.append("is:important")
     return " ".join(parts)
 
 
@@ -93,13 +115,21 @@ def inbox_inspector(
     user: User = Depends(require_jwt_user),
 ) -> dict:
     gmail = GmailService(db)
-    query = _build_inbox_inspector_query(
-        body.date_from,
-        body.date_to,
-        primary_only=body.primary_only,
-        include_categories=body.include_categories,
-        exclude_categories=body.exclude_categories,
-    )
+    custom = (body.custom_gmail_q or "").strip()
+    if custom:
+        if body.merge_date_range_with_custom:
+            query = " ".join([custom, *_date_range_tokens(body.date_from, body.date_to)])
+        else:
+            query = custom
+    else:
+        query = _build_inbox_inspector_query(
+            body.date_from,
+            body.date_to,
+            primary_only=body.primary_only,
+            important_only=body.important_only,
+            include_categories=body.include_categories,
+            exclude_categories=body.exclude_categories,
+        )
 
     ids: list[str] = []
     page_token: str | None = None

@@ -348,8 +348,11 @@ export async function fetchInboxInspector(body: {
   date_to: string;
   max_messages: number;
   primary_only?: boolean;
+  important_only?: boolean;
   include_categories?: GmailCategoryTab[];
   exclude_categories?: GmailCategoryTab[];
+  custom_gmail_q?: string;
+  merge_date_range_with_custom?: boolean;
 }): Promise<InboxInspectorResult> {
   return postJson("/debug/inbox", body);
 }

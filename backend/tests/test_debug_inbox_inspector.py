@@ -28,6 +28,7 @@ def test_build_inbox_inspector_query_default_no_category_filters() -> None:
     assert "before:2026/04/02" in q
     assert "-category:" not in q
     assert "category:" not in q
+    assert "is:important" not in q
 
 
 def test_build_inbox_inspector_uses_slashes_not_hyphens_in_dates() -> None:
@@ -66,6 +67,16 @@ def test_build_include_single_category() -> None:
     )
     assert "category:updates" in q
     assert "{" not in q
+
+
+def test_build_important_only_adds_is_important() -> None:
+    q = _build_inbox_inspector_query(
+        "2026-01-01",
+        "2026-02-01",
+        important_only=True,
+    )
+    assert "is:important" in q
+    assert "in:inbox" in q
 
 
 def test_build_exclude_categories() -> None:
@@ -174,6 +185,98 @@ def test_inbox_inspector_primary_only_in_query(monkeypatch) -> None:
     )
     assert "-category:promotions" in out["gmail_query"]
     assert out["fetched_count"] == 1
+
+
+def test_inbox_inspector_custom_gmail_q_bypasses_structured_filters(monkeypatch) -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-custom",
+        email="user@example.com",
+        access_token="token",
+        refresh_token="refresh",
+        token_expiry=datetime.now(timezone.utc),
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    seen_queries: list[str] = []
+
+    def fake_list_messages(self, user_arg, query="", max_results=100, page_token=None):  # type: ignore[no-untyped-def]
+        seen_queries.append(query)
+        return {"messages": [{"id": "c1"}], "nextPageToken": None}
+
+    def fake_get_message(self, user_arg, msg_id, fmt="full"):  # type: ignore[no-untyped-def]
+        return {"id": msg_id, "labelIds": []}
+
+    def fake_list_labels(self, user_arg):  # type: ignore[no-untyped-def]
+        return []
+
+    monkeypatch.setattr(GmailService, "list_messages", fake_list_messages)
+    monkeypatch.setattr(GmailService, "get_message", fake_get_message)
+    monkeypatch.setattr(GmailService, "list_labels", fake_list_labels)
+
+    custom = "label:INBOX -category:{promotions social updates}"
+    out = inbox_inspector(
+        body=InboxInspectorRequest(
+            date_from="2026-01-01",
+            date_to="2026-02-01",
+            max_messages=1,
+            primary_only=True,
+            important_only=True,
+            custom_gmail_q=custom,
+            merge_date_range_with_custom=False,
+        ),
+        db=db,
+        user=user,
+    )
+
+    assert seen_queries == [custom]
+    assert out["gmail_query"] == custom
+
+
+def test_inbox_inspector_custom_gmail_q_merges_date_range(monkeypatch) -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-merge",
+        email="user@example.com",
+        access_token="token",
+        refresh_token="refresh",
+        token_expiry=datetime.now(timezone.utc),
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    def fake_list_messages(self, user_arg, query="", max_results=100, page_token=None):  # type: ignore[no-untyped-def]
+        return {"messages": [{"id": "m1"}], "nextPageToken": None}
+
+    def fake_get_message(self, user_arg, msg_id, fmt="full"):  # type: ignore[no-untyped-def]
+        return {"id": msg_id, "labelIds": []}
+
+    def fake_list_labels(self, user_arg):  # type: ignore[no-untyped-def]
+        return []
+
+    monkeypatch.setattr(GmailService, "list_messages", fake_list_messages)
+    monkeypatch.setattr(GmailService, "get_message", fake_get_message)
+    monkeypatch.setattr(GmailService, "list_labels", fake_list_labels)
+
+    out = inbox_inspector(
+        body=InboxInspectorRequest(
+            date_from="2026-03-01",
+            date_to="2026-03-31",
+            max_messages=1,
+            custom_gmail_q="label:INBOX",
+            merge_date_range_with_custom=True,
+        ),
+        db=db,
+        user=user,
+    )
+
+    q = out["gmail_query"]
+    assert q.startswith("label:INBOX ")
+    assert "after:2026/03/01" in q
+    assert "before:2026/04/01" in q
 
 
 def test_inbox_inspector_paginates_until_max_messages(monkeypatch) -> None:
