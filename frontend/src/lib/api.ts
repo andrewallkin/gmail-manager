@@ -334,6 +334,8 @@ export async function retroactiveClassification(body: {
   return postJson("/cleanup/retroactive", body);
 }
 
+export type GmailCategoryTab = "promotions" | "social" | "updates" | "forums";
+
 export type InboxInspectorResult = {
   gmail_query: string;
   fetched_count: number;
@@ -345,6 +347,9 @@ export async function fetchInboxInspector(body: {
   date_from: string;
   date_to: string;
   max_messages: number;
+  primary_only?: boolean;
+  include_categories?: GmailCategoryTab[];
+  exclude_categories?: GmailCategoryTab[];
 }): Promise<InboxInspectorResult> {
   return postJson("/debug/inbox", body);
 }

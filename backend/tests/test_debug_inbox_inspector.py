@@ -20,12 +20,62 @@ def _make_db() -> Session:
     return SessionLocal()
 
 
-def test_build_inbox_inspector_query_has_inbox_no_category_negation() -> None:
+def test_build_inbox_inspector_query_default_no_category_filters() -> None:
     q = _build_inbox_inspector_query("2026-03-01T12:00:00Z", "2026-04-01")
     assert "in:inbox" in q
-    assert "after:2026-03-01" in q
-    assert "before:2026-04-01" in q
+    assert "after:2026/03/01" in q
+    # End date 2026-04-01 inclusive → before: is exclusive, so next calendar day
+    assert "before:2026/04/02" in q
     assert "-category:" not in q
+    assert "category:" not in q
+
+
+def test_build_inbox_inspector_uses_slashes_not_hyphens_in_dates() -> None:
+    q = _build_inbox_inspector_query("2026-03-01", "2026-03-31")
+    assert "after:2026/03/01" in q
+    assert "before:2026/04/01" in q
+    assert "2026-03" not in q
+
+
+def test_build_primary_only_negates_all_category_tabs() -> None:
+    q = _build_inbox_inspector_query(
+        "2026-01-01",
+        "2026-02-01",
+        primary_only=True,
+    )
+    assert "-category:promotions" in q
+    assert "-category:social" in q
+    assert "-category:updates" in q
+    assert "-category:forums" in q
+
+
+def test_build_include_multiple_categories_uses_or_group() -> None:
+    q = _build_inbox_inspector_query(
+        "2026-01-01",
+        "2026-02-01",
+        include_categories=["promotions", "social"],
+    )
+    assert "{category:promotions category:social}" in q
+
+
+def test_build_include_single_category() -> None:
+    q = _build_inbox_inspector_query(
+        "2026-01-01",
+        "2026-02-01",
+        include_categories=["updates"],
+    )
+    assert "category:updates" in q
+    assert "{" not in q
+
+
+def test_build_exclude_categories() -> None:
+    q = _build_inbox_inspector_query(
+        "2026-01-01",
+        "2026-02-01",
+        exclude_categories=["forums", "promotions"],
+    )
+    assert "-category:forums" in q
+    assert "-category:promotions" in q
 
 
 def test_inbox_inspector_lists_and_fetches_full_messages(monkeypatch) -> None:
@@ -84,6 +134,46 @@ def test_inbox_inspector_lists_and_fetches_full_messages(monkeypatch) -> None:
     assert out["label_map"]["INBOX"] == "INBOX"
     assert len(out["messages"]) == 2
     assert out["messages"][0]["id"] == "m-1"
+
+
+def test_inbox_inspector_primary_only_in_query(monkeypatch) -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-primary",
+        email="user@example.com",
+        access_token="token",
+        refresh_token="refresh",
+        token_expiry=datetime.now(timezone.utc),
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    def fake_list_messages(self, user_arg, query="", max_results=100, page_token=None):  # type: ignore[no-untyped-def]
+        return {"messages": [{"id": "x1"}], "nextPageToken": None}
+
+    def fake_get_message(self, user_arg, msg_id, fmt="full"):  # type: ignore[no-untyped-def]
+        return {"id": msg_id, "labelIds": []}
+
+    def fake_list_labels(self, user_arg):  # type: ignore[no-untyped-def]
+        return []
+
+    monkeypatch.setattr(GmailService, "list_messages", fake_list_messages)
+    monkeypatch.setattr(GmailService, "get_message", fake_get_message)
+    monkeypatch.setattr(GmailService, "list_labels", fake_list_labels)
+
+    out = inbox_inspector(
+        body=InboxInspectorRequest(
+            date_from="2026-01-01",
+            date_to="2026-02-01",
+            max_messages=1,
+            primary_only=True,
+        ),
+        db=db,
+        user=user,
+    )
+    assert "-category:promotions" in out["gmail_query"]
+    assert out["fetched_count"] == 1
 
 
 def test_inbox_inspector_paginates_until_max_messages(monkeypatch) -> None:
