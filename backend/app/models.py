@@ -112,6 +112,8 @@ class RetroactiveClassificationJob(Base):
     processed_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     rule_matched_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     ai_classified_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    ai_trash_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    ai_temporary_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

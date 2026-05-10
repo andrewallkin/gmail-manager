@@ -1339,6 +1339,98 @@ def test_retro_job_worker_orders_rules(monkeypatch) -> None:
     assert job.processed_count >= 1
 
 
+def test_retro_job_counts_ai_triage_buckets(monkeypatch) -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="u@example.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+        ai_enabled=True,
+        ai_api_key="sk-test",
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    trash_label = Label(
+        user_id=user.id,
+        gmail_label_id="GTrash",
+        name="Action/Triage-Trash",
+        label_type="user",
+    )
+    temp_label = Label(
+        user_id=user.id,
+        gmail_label_id="GTemp",
+        name="Action/Triage-Temporary",
+        label_type="user",
+    )
+    db.add_all([trash_label, temp_label])
+    db.commit()
+
+    job = RetroactiveClassificationJob(
+        user_id=user.id,
+        date_from=date.fromisoformat("2026-01-01"),
+        date_to=date.fromisoformat("2026-01-31"),
+        use_ai=True,
+        status="pending",
+        page_token=None,
+        processed_count=0,
+        rule_matched_count=0,
+        ai_classified_count=0,
+        ai_trash_count=0,
+        ai_temporary_count=0,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    class _FakeAIService:
+        def classify_triage_email(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            return "GTemp"
+
+    monkeypatch.setattr(poller, "AIService", lambda _api_key: _FakeAIService())
+    monkeypatch.setattr(mp, "apply_matching_rules", lambda *_a, **_k: [])  # type: ignore[no-untyped-def]
+
+    class _FakeGmailService:
+        def __init__(self, _db: Session) -> None:
+            self._list_calls = 0
+
+        def list_messages(self, *_args, **_kwargs) -> dict:  # type: ignore[no-untyped-def]
+            self._list_calls += 1
+            if self._list_calls == 1:
+                return {"messages": [{"id": "msg-1"}], "nextPageToken": None}
+            return {"messages": []}
+
+        def get_message(self, _user: User, _msg_id: str, fmt: str = "full") -> dict:
+            return {
+                "labelIds": ["INBOX"],
+                "payload": {
+                    "headers": [
+                        {"name": "From", "value": "promo@test"},
+                        {"name": "Subject", "value": "hi"},
+                    ],
+                    "body": {},
+                },
+            }
+
+        def modify_message(self, *_args, **_kwargs) -> dict:  # type: ignore[no-untyped-def]
+            return {}
+
+    monkeypatch.setattr(poller, "GmailService", _FakeGmailService)
+    gmail = poller.GmailService(db)
+
+    poller._advance_retroactive_classification_jobs(user, gmail, db, cycle_id="test")
+
+    db.refresh(job)
+    assert job.status == "completed"
+    assert job.ai_classified_count == 1
+    assert job.ai_trash_count == 0
+    assert job.ai_temporary_count == 1
+
+
 def test_pipeline_ai_triage_removes_inbox_for_promotions_tab(monkeypatch) -> None:
     import logging
     from unittest.mock import MagicMock
@@ -1413,6 +1505,7 @@ def test_pipeline_ai_triage_removes_inbox_for_promotions_tab(monkeypatch) -> Non
     )
 
     assert out.kind == "ai_triage"
+    assert out.triage_chosen_gmail_label_id == "GTrash"
     adds, removes = gmail.modify_calls[0]
     assert adds == ["GTrash"]
     assert removes == ["INBOX"]

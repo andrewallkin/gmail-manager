@@ -20,6 +20,7 @@ export type Status = {
   profile_picture_url: string | null;
   ai_enabled: boolean;
   ai_provider: string | null;
+  ai_api_key_configured: boolean;
   auto_remove_inbox_labeled_read: boolean;
   polling_enabled: boolean;
   polling_interval_minutes: number;
@@ -339,6 +340,8 @@ export type RetroClassificationJob = {
   processed_count: number;
   rule_matched_count: number;
   ai_classified_count: number;
+  ai_trash_count: number;
+  ai_temporary_count: number;
   error_message: string | null;
   created_at: string;
   completed_at: string | null;
@@ -374,6 +377,11 @@ export async function createRetroClassificationJob(body: {
 
 export async function fetchRetroClassificationJob(jobId: number): Promise<RetroClassificationJob> {
   return getJson<RetroClassificationJob>(`/cleanup/retroactive/${jobId}`);
+}
+
+export async function fetchRetroClassificationJobs(limit?: number): Promise<RetroClassificationJob[]> {
+  const q = typeof limit === "number" ? `?limit=${encodeURIComponent(String(limit))}` : "";
+  return getJson<RetroClassificationJob[]>(`/cleanup/retroactive${q}`);
 }
 
 export type GmailCategoryTab = "promotions" | "social" | "updates" | "forums";

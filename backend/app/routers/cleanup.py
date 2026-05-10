@@ -79,6 +79,8 @@ class RetroactiveJobOut(BaseModel):
     processed_count: int
     rule_matched_count: int
     ai_classified_count: int
+    ai_trash_count: int
+    ai_temporary_count: int
     error_message: str | None
     created_at: datetime
     completed_at: datetime | None
@@ -182,12 +184,30 @@ def create_retroactive_job(
         processed_count=0,
         rule_matched_count=0,
         ai_classified_count=0,
+        ai_trash_count=0,
+        ai_temporary_count=0,
     )
     db.add(job)
     db.commit()
     db.refresh(job)
     log.info("Retroactive classification job queued id=%s user=%s", job.id, user.email)
     return RetroactiveJobCreateResponse(job_id=job.id)
+
+
+@router.get("/retroactive", response_model=list[RetroactiveJobOut])
+def list_retroactive_jobs(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_jwt_user),
+    limit: int = 100,
+) -> list[RetroactiveJobOut]:
+    capped = max(1, min(limit, 100))
+    jobs = db.scalars(
+        select(RetroactiveClassificationJob)
+        .where(RetroactiveClassificationJob.user_id == user.id)
+        .order_by(RetroactiveClassificationJob.created_at.desc())
+        .limit(capped)
+    ).all()
+    return [RetroactiveJobOut.model_validate(j) for j in jobs]
 
 
 @router.get("/retroactive/{job_id}")

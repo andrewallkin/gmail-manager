@@ -25,6 +25,7 @@ OutcomeKind = Literal[
 class MessagePipelineOutcome:
     kind: OutcomeKind
     matched_rule_ids: tuple[int, ...] = ()
+    triage_chosen_gmail_label_id: str | None = None
 
 
 def process_message_rules_and_triage(
@@ -152,4 +153,4 @@ def process_message_rules_and_triage(
         remove_inbox,
         extras,
     )
-    return MessagePipelineOutcome("ai_triage")
+    return MessagePipelineOutcome("ai_triage", triage_chosen_gmail_label_id=chosen)

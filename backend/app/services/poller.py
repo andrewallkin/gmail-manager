@@ -107,6 +107,8 @@ def _advance_retroactive_classification_jobs(
         processed_this_batch = 0
         rule_matched_this_batch = 0
         ai_this_batch = 0
+        ai_trash_this_batch = 0
+        ai_temp_this_batch = 0
 
         for msg_ref in messages:
             mid = msg_ref["id"]
@@ -133,6 +135,21 @@ def _advance_retroactive_classification_jobs(
                     rule_matched_this_batch += 1
                 if out.kind == "ai_triage":
                     ai_this_batch += 1
+                    chosen_id = out.triage_chosen_gmail_label_id
+                    if triage_labels is not None:
+                        trash_label, temporary_label = triage_labels
+                        if chosen_id == trash_label.gmail_label_id:
+                            ai_trash_this_batch += 1
+                        elif chosen_id == temporary_label.gmail_label_id:
+                            ai_temp_this_batch += 1
+                        else:
+                            log_retro.warning(
+                                "event=retro_job_ai_unknown_label cycle_id=%s user=%s job_id=%s label_id=%s",
+                                cycle_id,
+                                user.email,
+                                job.id,
+                                chosen_id,
+                            )
             except Exception as exc:
                 log_retro.exception(
                     "event=retro_job_message_failed cycle_id=%s job_id=%s msg_id=%s error=%s",
@@ -150,6 +167,8 @@ def _advance_retroactive_classification_jobs(
         job.processed_count += processed_this_batch
         job.rule_matched_count += rule_matched_this_batch
         job.ai_classified_count += ai_this_batch
+        job.ai_trash_count += ai_trash_this_batch
+        job.ai_temporary_count += ai_temp_this_batch
         job.page_token = next_page_token
 
         if not messages:
