@@ -34,6 +34,7 @@ function formatShortDate(isoDate: string): string {
 export function AIPage({ status, onStatusChange }: Props) {
   const [aiProvider, setAiProvider] = useState(status.ai_provider ?? "");
   const [aiApiKey, setAiApiKey] = useState("");
+  const [showReplaceKeyInput, setShowReplaceKeyInput] = useState(false);
   const [autoRemoveInbox, setAutoRemoveInbox] = useState(status.auto_remove_inbox_labeled_read);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
@@ -61,6 +62,12 @@ export function AIPage({ status, onStatusChange }: Props) {
     setAiProvider(status.ai_provider ?? "");
     setAutoRemoveInbox(status.auto_remove_inbox_labeled_read);
   }, [status]);
+
+  useEffect(() => {
+    if (!status.ai_api_key_configured) {
+      setShowReplaceKeyInput(false);
+    }
+  }, [status.ai_api_key_configured]);
 
   const loadLabels = useCallback(async () => {
     setLoadingLabels(true);
@@ -206,6 +213,33 @@ export function AIPage({ status, onStatusChange }: Props) {
       const updated = await updateSettings(payload);
       onStatusChange(updated);
       setAiApiKey("");
+      if (updated.ai_api_key_configured) {
+        setShowReplaceKeyInput(false);
+      }
+      setSettingsSaved(true);
+      setTimeout(() => setSettingsSaved(false), 3000);
+    } catch {
+      // ignore
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const handleRemoveApiKey = async () => {
+    if (
+      !window.confirm(
+        "Remove the stored API key? AI triage will not run until you save a new key.",
+      )
+    ) {
+      return;
+    }
+    setSavingSettings(true);
+    setSettingsSaved(false);
+    try {
+      const updated = await updateSettings({ ai_api_key: null });
+      onStatusChange(updated);
+      setAiApiKey("");
+      setShowReplaceKeyInput(false);
       setSettingsSaved(true);
       setTimeout(() => setSettingsSaved(false), 3000);
     } catch {
@@ -371,25 +405,65 @@ export function AIPage({ status, onStatusChange }: Props) {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-google-text-secondary mb-1 flex items-center gap-2 flex-wrap">
-              API Key
-              {status.ai_api_key_configured && (
-                <span className="text-xs font-normal text-google-green px-2 py-0.5 rounded-full bg-google-green-light border border-google-green/20">
-                  Saved on server
-                </span>
-              )}
-            </label>
-            <input
-              type="password"
-              value={aiApiKey}
-              onChange={(e) => setAiApiKey(e.target.value)}
-              placeholder={status.ai_api_key_configured ? "Enter new key to replace…" : "Enter API key"}
-              autoComplete="off"
-              className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
-            />
-            <p className="mt-1 text-xs text-google-text-tertiary">
-              Leave blank to keep your current key; type only when changing it.
-            </p>
+            <label className="block text-sm font-medium text-google-text-secondary mb-1">API Key</label>
+            {status.ai_api_key_configured && !showReplaceKeyInput ? (
+              <div className="rounded-lg border border-google-green/25 bg-google-green-light/80 px-3 py-3 space-y-3">
+                <div>
+                  <p className="text-sm font-medium text-google-text">API key configured</p>
+                  <p className="text-xs text-google-text-secondary mt-1">
+                    A key is stored on this server. It is not shown or loaded into this form.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRemoveApiKey}
+                    disabled={savingSettings}
+                    className="px-3 py-1.5 text-sm font-medium rounded-lg border border-red-200 text-gmail-red bg-white hover:bg-red-50 disabled:opacity-50 transition-colors"
+                  >
+                    Remove API key
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowReplaceKeyInput(true)}
+                    disabled={savingSettings}
+                    className="px-3 py-1.5 text-sm font-medium rounded-lg border border-google-border text-google-text-secondary bg-white hover:bg-google-bg disabled:opacity-50 transition-colors"
+                  >
+                    Replace key
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <input
+                  type="password"
+                  value={aiApiKey}
+                  onChange={(e) => setAiApiKey(e.target.value)}
+                  placeholder={
+                    status.ai_api_key_configured ? "Paste new API key" : "Enter API key"
+                  }
+                  autoComplete="off"
+                  className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
+                />
+                <p className="mt-1 text-xs text-google-text-tertiary">
+                  {status.ai_api_key_configured
+                    ? "Save AI Settings to store the new key. Your previous key is discarded once replaced."
+                    : "The key is stored on the server and is never returned to the browser after saving."}
+                </p>
+                {status.ai_api_key_configured && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowReplaceKeyInput(false);
+                      setAiApiKey("");
+                    }}
+                    className="mt-2 text-sm text-google-blue hover:underline"
+                  >
+                    Cancel — keep current key
+                  </button>
+                )}
+              </>
+            )}
           </div>
         </div>
 
