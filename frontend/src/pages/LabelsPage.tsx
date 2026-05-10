@@ -1,6 +1,16 @@
 import { useEffect, useState } from "react";
-import { LabelItem, fetchLabels, syncLabels, createLabel, updateLabel, deleteLabel } from "../lib/api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { LabelItem, fetchLabels, syncLabels, createLabel, updateLabel, deleteLabel } from "../lib/api";
+
+function isTriageLabel(name: string): boolean {
+  return name.startsWith("Action/Triage-");
+}
+
+function retentionScopeShort(scope: LabelItem["retention_scope"]) {
+  if (scope === "read_only") return "Read only";
+  if (scope === "unread_only") return "Unread only";
+  return "";
+}
 
 const GMAIL_LABEL_COLORS = [
   { bg: "#000000", text: "#ffffff" },
@@ -43,6 +53,7 @@ export function LabelsPage() {
   const [editBg, setEditBg] = useState("");
   const [editText, setEditText] = useState("");
   const [editRetention, setEditRetention] = useState<string>("");
+  const [editRetentionScope, setEditRetentionScope] = useState<LabelItem["retention_scope"]>("all");
   const [savingEdit, setSavingEdit] = useState(false);
   const [typeFilter, setTypeFilter] = useState<"all" | "user" | "system">("user");
   const [typeSortDirection, setTypeSortDirection] = useState<"asc" | "desc" | null>(null);
@@ -102,6 +113,7 @@ export function LabelsPage() {
     setEditBg(label.color_bg ?? "");
     setEditText(label.color_text ?? "");
     setEditRetention(label.retention_days != null ? String(label.retention_days) : "");
+    setEditRetentionScope(label.retention_scope ?? "all");
   };
 
   const handleSaveEdit = async () => {
@@ -113,6 +125,7 @@ export function LabelsPage() {
         bg_color: editBg || undefined,
         text_color: editText || undefined,
         retention_days: editRetention ? Number(editRetention) : null,
+        ...(isTriageLabel(editName.trim()) ? { retention_scope: editRetentionScope } : {}),
       });
       setEditingId(null);
       load();
@@ -151,6 +164,8 @@ export function LabelsPage() {
         return a.name.localeCompare(b.name);
       })
     : filtered;
+
+  const editingLabel = editingId !== null ? displayed.find((l) => l.id === editingId) : undefined;
 
   const cycleTypeSort = () => {
     setTypeSortDirection((d) => (d === null ? "asc" : d === "asc" ? "desc" : null));
@@ -275,6 +290,24 @@ export function LabelsPage() {
                           placeholder="Always"
                           className="w-32 px-2 py-1 border border-google-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
                         />
+                        {editingLabel != null && isTriageLabel(editingLabel.name) ? (
+                          <div className="mt-2">
+                            <label className="block text-xs font-medium text-google-text-secondary mb-1">
+                              Apply retention to
+                            </label>
+                            <select
+                              value={editRetentionScope}
+                              onChange={(e) =>
+                                setEditRetentionScope(e.target.value as LabelItem["retention_scope"])
+                              }
+                              className="w-full max-w-xs px-2 py-1 border border-google-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-google-blue bg-white"
+                            >
+                              <option value="all">All messages under label</option>
+                              <option value="read_only">Read only</option>
+                              <option value="unread_only">Unread only</option>
+                            </select>
+                          </div>
+                        ) : null}
                       </div>
                       <div className="flex gap-2">
                         <button
@@ -315,8 +348,23 @@ export function LabelsPage() {
                 <td className="px-4 py-3 text-right text-google-text-secondary">{label.unread_count}</td>
                 <td className="px-4 py-3 text-right text-google-text-secondary">
                   {label.label_type === "user" ? (
-                    label.retention_days != null ? `${label.retention_days} days` : "Always"
-                  ) : ""}
+                    label.retention_days != null ? (
+                      <span>
+                        {label.retention_days} days
+                        {isTriageLabel(label.name) &&
+                        label.retention_scope &&
+                        label.retention_scope !== "all" ? (
+                          <span className="block text-xs text-google-text-tertiary mt-0.5">
+                            {retentionScopeShort(label.retention_scope)}
+                          </span>
+                        ) : null}
+                      </span>
+                    ) : (
+                      "Always"
+                    )
+                  ) : (
+                    ""
+                  )}
                 </td>
                 <td className="px-4 py-3 text-right">
                   {label.label_type === "user" && editingId !== label.id && (

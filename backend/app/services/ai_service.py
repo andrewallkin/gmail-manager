@@ -1,75 +1,100 @@
+import json
 import logging
+import time
 
 import httpx
 
 log = logging.getLogger("ai")
 
 
+def _classification_backoff_seconds(attempt: int) -> float:
+    return 0.4 * (2**attempt)
+
+
 class AIService:
     def __init__(self, api_key: str) -> None:
         self.api_key = api_key
 
-    def classify_email(
+    def classify_triage_email(
         self,
         sender: str,
         subject: str,
         body: str,
-        available_labels: list[dict],
-    ) -> str | None:
-        """Classify an email into one of the available labels using OpenAI gpt-4o-mini.
+        triage_label_dicts: list[dict],
+        default_label_id: str,
+    ) -> str:
+        """Binary classifier: picks exactly one of two Gmail label ids; JSON response.
 
-        available_labels: list of {"id": gmail_label_id, "name": label_name}
-        Returns gmail_label_id or None if no match.
+        Each dict must have keys id, name, optional description.
+        Always returns either a valid chosen id or `default_label_id` after exhaustive failure.
         """
+        if len(triage_label_dicts) != 2:
+            raise ValueError("classify_triage_email requires exactly two label dicts")
+        valid_ids = {d["id"] for d in triage_label_dicts}
+        if default_label_id not in valid_ids:
+            raise ValueError("default_label_id must be one of the triage label ids")
+
         label_lines = []
-        for label in available_labels:
-            line = f"- {label['name']} (ID: {label['id']})"
-            if label.get("description"):
-                line += f" - Context: {label['description']}"
+        for lbl in triage_label_dicts:
+            line = f"- {lbl['name']} (ID: {lbl['id']})"
+            if lbl.get("description"):
+                line += f" — context: {lbl['description']}"
             label_lines.append(line)
         label_list = "\n".join(label_lines)
-        valid_ids = {l["id"] for l in available_labels}
 
         system_prompt = (
-            "You are an email classifier. Given an email's sender, subject, and body, "
-            "determine which label best fits this email.\n\n"
-            f"Available labels:\n{label_list}\n\n"
-            "Respond with ONLY the label ID (e.g., Label_123) or NONE if no label fits. "
-            "Do not include any other text."
+            "You classify inbox email into exactly ONE of two Gmail labels listed below.\n"
+            "You MUST choose exactly one label ID below. Respond with ONLY a JSON object of the "
+            'form {"label_id":"<chosen_id>"} with no markdown and no explanation.\n\n'
+            f"Allowed label IDs:\n{label_list}"
         )
 
         user_prompt = f"From: {sender}\nSubject: {subject}\n\nBody:\n{body[:2000]}"
 
-        try:
-            resp = httpx.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": "gpt-4o-mini",
-                    "temperature": 0,
-                    "max_tokens": 50,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                },
-                timeout=30,
-            )
-            resp.raise_for_status()
-            result = resp.json()
-            answer = result["choices"][0]["message"]["content"].strip()
+        last_exc: BaseException | None = None
+        for attempt in range(3):
+            try:
+                resp = httpx.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "gpt-4o-mini",
+                        "temperature": 0,
+                        "max_tokens": 128,
+                        "response_format": {"type": "json_object"},
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                    },
+                    timeout=45,
+                )
+                resp.raise_for_status()
+                result = resp.json()
+                raw = result["choices"][0]["message"]["content"].strip()
+                data = json.loads(raw)
+                lid = data.get("label_id")
+                if isinstance(lid, str) and lid in valid_ids:
+                    return lid
 
-            if answer.upper() == "NONE":
-                return None
-            if answer in valid_ids:
-                return answer
+                log.warning(
+                    "AI triage returned invalid label_id attempt=%s value=%s raw=%s",
+                    attempt + 1,
+                    lid,
+                    raw[:500],
+                )
+            except Exception as exc:
+                last_exc = exc
+                log.warning("AI triage attempt %s failed: %s", attempt + 1, exc)
+            if attempt < 2:
+                time.sleep(_classification_backoff_seconds(attempt))
 
-            log.warning("AI returned invalid label ID: %s", answer)
-            return None
-
-        except Exception as exc:
-            log.error("AI classification failed: %s", exc)
-            return None
+        log.error(
+            "AI triage exhausted retries; using default_label_id=%s last_error=%s",
+            default_label_id,
+            last_exc,
+        )
+        return default_label_id

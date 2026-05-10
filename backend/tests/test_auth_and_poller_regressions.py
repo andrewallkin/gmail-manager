@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import httpx
 import logging
@@ -7,12 +7,12 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import Base
-from app.models import Label, Rule, SystemLabelRetention, User
+from app.models import Label, RetroactiveClassificationJob, Rule, SystemLabelRetention, User
 from app.routers.auth import disconnect_google
 from app.routers import rules as rules_router
-from app.routers import cleanup as cleanup_router
 from app.services.google_service import GoogleService
 from app.services import poller
+from app.services import message_pipeline as mp
 from app.services.rule_engine import apply_matching_rules, message_matches_rule
 
 
@@ -885,6 +885,55 @@ def test_label_retention_cleanup() -> None:
     assert gmail.trashed_batches == [["m-1", "m-2"]]
 
 
+def test_label_retention_cleanup_read_only_scope_query() -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    label = Label(
+        user_id=user.id,
+        gmail_label_id="Label_42",
+        name="Newsletters",
+        label_type="user",
+        retention_days=14,
+        retention_scope="read_only",
+    )
+    db.add(label)
+    db.commit()
+
+    class _FakeGmailService:
+        def __init__(self) -> None:
+            self.seen_queries: list[str] = []
+
+        def list_messages(
+            self,
+            _user: User,
+            query: str = "",
+            max_results: int = 100,
+            page_token: str | None = None,
+        ) -> dict:
+            self.seen_queries.append(query)
+            return {"messages": []}
+
+        def batch_trash_messages(self, *_args) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+    gmail = _FakeGmailService()
+    poller._run_label_retention_cleanup(user, gmail, db)
+
+    assert len(gmail.seen_queries) == 1
+    assert "is:read" in gmail.seen_queries[0]
+
+
 def test_preview_rule_counts_all_pages(monkeypatch) -> None:
     db = _make_db()
     user = User(
@@ -1212,7 +1261,7 @@ def test_reorder_rules_rejects_invalid_ids() -> None:
         raise AssertionError("expected HTTPException")
 
 
-def test_retroactive_classification_loads_rules_in_priority_order(monkeypatch) -> None:
+def test_retro_job_worker_orders_rules(monkeypatch) -> None:
     db = _make_db()
     user = User(
         google_id="gid-1",
@@ -1221,6 +1270,8 @@ def test_retroactive_classification_loads_rules_in_priority_order(monkeypatch) -
         refresh_token="refresh",
         polling_enabled=True,
         polling_interval_minutes=1,
+        ai_enabled=False,
+        ai_api_key=None,
     )
     db.add(user)
     db.commit()
@@ -1230,27 +1281,41 @@ def test_retroactive_classification_loads_rules_in_priority_order(monkeypatch) -
     higher_priority = Rule(user_id=user.id, name="First", priority=1, enabled=True, scope="all_inbox")
     db.add_all([lower_priority, higher_priority])
     db.commit()
+    db.refresh(lower_priority)
+    db.refresh(higher_priority)
 
-    captured_rule_order: list[int] = []
+    job = RetroactiveClassificationJob(
+        user_id=user.id,
+        date_from=date.fromisoformat("2026-01-01"),
+        date_to=date.fromisoformat("2026-01-31"),
+        use_ai=False,
+        status="pending",
+        page_token=None,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    captured_rule_ids: list[int] | None = None
+
+    def _capture_rules(rules, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+        nonlocal captured_rule_ids
+        captured_rule_ids = [r.id for r in rules]
+        return []
+
+    monkeypatch.setattr(mp, "apply_matching_rules", _capture_rules)
 
     class _FakeGmailService:
         def __init__(self, _db: Session) -> None:
-            self.seen = False
+            self._calls = 0
 
-        def list_messages(
-            self,
-            _user: User,
-            query: str = "",
-            max_results: int = 100,
-            page_token: str | None = None,
-        ) -> dict:
-            assert query
-            if self.seen:
-                return {"messages": []}
-            self.seen = True
-            return {"messages": [{"id": "msg-1"}]}
+        def list_messages(self, *_args, **_kwargs) -> dict:  # type: ignore[no-untyped-def]
+            self._calls += 1
+            if self._calls == 1:
+                return {"messages": [{"id": "msg-1"}], "nextPageToken": None}
+            return {"messages": []}
 
-        def get_message(self, _user: User, _msg_id: str) -> dict:
+        def get_message(self, _user: User, _msg_id: str, fmt: str = "full") -> dict:
             return {
                 "labelIds": ["INBOX"],
                 "payload": {
@@ -1263,24 +1328,91 @@ def test_retroactive_classification_loads_rules_in_priority_order(monkeypatch) -
                 },
             }
 
-        def modify_message(self, _user: User, _msg_id: str, add_labels: list[str] | None = None) -> None:
-            assert add_labels is None
+    monkeypatch.setattr(poller, "GmailService", _FakeGmailService)
+    gmail = poller.GmailService(db)
 
-    def _capture_order(rules, *args, **kwargs):  # type: ignore[no-untyped-def]
-        captured_rule_order[:] = [rule.id for rule in rules]
-        return []
+    poller._advance_retroactive_classification_jobs(user, gmail, db, cycle_id="test")
 
-    monkeypatch.setattr(cleanup_router, "GmailService", _FakeGmailService)
-    monkeypatch.setattr(cleanup_router, "apply_matching_rules", _capture_order)
+    db.refresh(job)
+    assert captured_rule_ids == [higher_priority.id, lower_priority.id]
+    assert job.status == "completed"
+    assert job.processed_count >= 1
 
-    cleanup_router.retroactive_classification(
-        cleanup_router.RetroactiveRequest(
-            date_from="2026-01-01T00:00:00Z",
-            date_to="2026-01-31T00:00:00Z",
-            max_messages=1,
-        ),
-        db=db,
+
+def test_pipeline_ai_triage_removes_inbox_for_promotions_tab(monkeypatch) -> None:
+    import logging
+    from unittest.mock import MagicMock
+
+    from app.services.message_pipeline import process_message_rules_and_triage
+
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="u@example.com",
+        access_token="t",
+        refresh_token="r",
+        polling_enabled=False,
+        ai_enabled=True,
+        ai_api_key="sk-test",
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    trash_label = Label(
+        user_id=user.id,
+        gmail_label_id="GTrash",
+        name="Action/Triage-Trash",
+        label_type="user",
+    )
+    temp_label = Label(
+        user_id=user.id,
+        gmail_label_id="GTemp",
+        name="Action/Triage-Temporary",
+        label_type="user",
+    )
+    db.add_all([trash_label, temp_label])
+    db.commit()
+
+    class _FakeGmailService:
+        def __init__(self) -> None:
+            self.modify_calls: list[tuple[list[str] | None, list[str] | None]] = []
+
+        def modify_message(self, _user: User, _msg_id: str, **kwargs):  # type: ignore[no-untyped-def]
+            self.modify_calls.append((kwargs.get("add_labels"), kwargs.get("remove_labels")))
+            return {}
+
+    ai = MagicMock()
+    ai.classify_triage_email.return_value = "GTrash"
+
+    monkeypatch.setattr(mp, "apply_matching_rules", lambda *_a, **_k: [])  # type: ignore[no-untyped-def]
+
+    gmail = _FakeGmailService()
+    details = {
+        "from": "promo@test",
+        "to": "me",
+        "subject": "deal",
+        "body": "buy",
+        "label_ids": ["INBOX", "CATEGORY_PROMOTIONS"],
+        "is_unread": True,
+    }
+
+    out = process_message_rules_and_triage(
+        log=logging.getLogger("test"),
+        gmail=gmail,  # type: ignore[arg-type]
         user=user,
+        db=db,
+        msg_id="m1",
+        details=details,
+        rules=[],
+        triage_labels=(trash_label, temp_label),
+        ai_service=ai,
+        user_ai_allowed=True,
+        retro_skip_ai=False,
+        cycle_id="c",
     )
 
-    assert captured_rule_order == [higher_priority.id, lower_priority.id]
+    assert out.kind == "ai_triage"
+    adds, removes = gmail.modify_calls[0]
+    assert adds == ["GTrash"]
+    assert removes == ["INBOX"]

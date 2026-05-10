@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.deps import require_jwt_user
 from app.models import SystemLabelRetention, User
+from app.services.triage import get_triage_labels
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 log = logging.getLogger("settings")
@@ -24,6 +25,7 @@ class SettingsOut(BaseModel):
     polling_enabled: bool
     polling_interval_minutes: int
     google_auth_broken: bool
+    triage_labels_ok: bool
 
     model_config = {"from_attributes": True}
 
@@ -51,7 +53,8 @@ class RetentionUpdate(BaseModel):
     items: list[RetentionItem]
 
 
-def _settings_out(user: User) -> SettingsOut:
+def _settings_out(user: User, db: Session) -> SettingsOut:
+    triage_labels_ok = get_triage_labels(db, user.id) is not None
     return SettingsOut(
         connected=user.google_id is not None,
         email=user.email,
@@ -63,14 +66,16 @@ def _settings_out(user: User) -> SettingsOut:
         polling_enabled=user.polling_enabled,
         polling_interval_minutes=user.polling_interval_minutes,
         google_auth_broken=user.google_auth_broken,
+        triage_labels_ok=triage_labels_ok,
     )
 
 
 @router.get("")
 def get_settings(
+    db: Session = Depends(get_db),
     user: User = Depends(require_jwt_user),
 ) -> SettingsOut:
-    return _settings_out(user)
+    return _settings_out(user, db)
 
 
 @router.patch("")
@@ -94,7 +99,7 @@ def update_settings(
     db.commit()
     db.refresh(user)
     log.info("Settings updated for user=%s", user.email)
-    return _settings_out(user)
+    return _settings_out(user, db)
 
 
 VALID_CATEGORIES = {"promotions", "social", "updates", "forums"}

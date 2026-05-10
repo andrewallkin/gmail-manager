@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -45,6 +45,7 @@ class Label(Base):
     message_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     unread_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    retention_scope: Mapped[str] = mapped_column(String(16), default="all", nullable=False)
     synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
@@ -93,6 +94,25 @@ class CleanupJob(Base):
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
     total_messages: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     processed_messages: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class RetroactiveClassificationJob(Base):
+    __tablename__ = "retroactive_classification_jobs"
+    __table_args__ = (Index("ix_retro_jobs_user_status", "user_id", "status"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    date_from: Mapped[date] = mapped_column(Date, nullable=False)
+    date_to: Mapped[date] = mapped_column(Date, nullable=False)
+    use_ai: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
+    page_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    processed_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    rule_matched_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    ai_classified_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
