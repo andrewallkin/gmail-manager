@@ -1,0 +1,17 @@
+Metadata-Version: 2.4
+Name: gmail-manager-backend
+Version: 0.1.0
+Summary: Gmail Manager backend service
+Requires-Python: >=3.12
+Requires-Dist: alembic>=1.14.0
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: httpx>=0.28.0
+Requires-Dist: PyJWT>=2.9.0
+Requires-Dist: psycopg2-binary>=2.9.9
+Requires-Dist: pydantic-settings>=2.7.0
+Requires-Dist: python-multipart>=0.0.20
+Requires-Dist: sqlalchemy>=2.0.37
+Requires-Dist: uvicorn>=0.34.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.3.4; extra == "dev"
+Requires-Dist: pytest-mock>=3.14.0; extra == "dev"

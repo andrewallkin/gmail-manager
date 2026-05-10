@@ -20,10 +20,12 @@ export type Status = {
   profile_picture_url: string | null;
   ai_enabled: boolean;
   ai_provider: string | null;
+  ai_api_key_configured: boolean;
   auto_remove_inbox_labeled_read: boolean;
   polling_enabled: boolean;
   polling_interval_minutes: number;
   google_auth_broken: boolean;
+  triage_labels_ok: boolean;
 };
 
 export type LabelItem = {
@@ -35,6 +37,7 @@ export type LabelItem = {
   color_text: string | null;
   ai_description: string | null;
   retention_days: number | null;
+  retention_scope: "all" | "read_only" | "unread_only";
   message_count: number;
   unread_count: number;
   synced_at: string | null;
@@ -45,6 +48,7 @@ export type RuleItem = {
   name: string;
   enabled: boolean;
   match_from: string | null;
+  match_from_exclude: string | null;
   match_to: string | null;
   match_subject: string | null;
   match_has_words: string | null;
@@ -54,6 +58,7 @@ export type RuleItem = {
   action_archive: boolean;
   action_delete: boolean;
   action_mark_read: boolean;
+  stop_on_match: boolean;
   scope: "primary" | "all_inbox";
   use_ai: boolean;
   ai_prompt: string | null;
@@ -68,6 +73,7 @@ export type RuleCreate = {
   name: string;
   enabled?: boolean;
   match_from?: string | null;
+  match_from_exclude?: string | null;
   match_to?: string | null;
   match_subject?: string | null;
   match_has_words?: string | null;
@@ -77,6 +83,7 @@ export type RuleCreate = {
   action_archive?: boolean;
   action_delete?: boolean;
   action_mark_read?: boolean;
+  stop_on_match?: boolean;
   scope?: "primary" | "all_inbox";
   use_ai?: boolean;
   ai_prompt?: string | null;
@@ -242,7 +249,14 @@ export async function createLabel(name: string, bg_color?: string, text_color?: 
 
 export async function updateLabel(
   id: number,
-  body: { name?: string; bg_color?: string; text_color?: string; ai_description?: string; retention_days?: number | null }
+  body: {
+    name?: string;
+    bg_color?: string;
+    text_color?: string;
+    ai_description?: string;
+    retention_days?: number | null;
+    retention_scope?: "all" | "read_only" | "unread_only";
+  }
 ): Promise<LabelItem> {
   return patchJson(`/labels/${id}`, body);
 }
@@ -275,7 +289,7 @@ export async function runRule(
   return postJson(`/rules/${id}/run`);
 }
 
-export async function reorderRules(ruleIds: number[]): Promise<{ reordered: boolean }> {
+export async function reorderRules(ruleIds: number[]): Promise<{ reordered: boolean; rule_ids: number[] }> {
   return putJson("/rules/reorder", { rule_ids: ruleIds });
 }
 
@@ -316,18 +330,81 @@ export async function previewCleanup(body: {
   return postJson("/cleanup/preview", body);
 }
 
-export async function retroactiveClassification(body: {
+export type RetroClassificationJob = {
+  id: number;
+  date_from: string;
+  date_to: string;
+  use_ai: boolean;
+  status: string;
+  page_token: string | null;
+  processed_count: number;
+  rule_matched_count: number;
+  ai_classified_count: number;
+  ai_trash_count: number;
+  ai_temporary_count: number;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+};
+
+export async function createRetroClassificationJob(body: {
   date_from: string;
   date_to: string;
   use_ai?: boolean;
-  max_messages?: number;
-}): Promise<{
-  total_processed: number;
-  rule_matched: number;
-  ai_classified: number;
+}): Promise<{ job_id: number }> {
+  const response = await fetch(`${API_BASE}/cleanup/retroactive`, {
+    ...FETCH_OPTS,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  handle401(response, true);
+  if (!response.ok) {
+    let message = `Request failed: ${response.status}`;
+    try {
+      const data = await response.clone().json();
+      if (data && typeof data.detail === "string") {
+        message = data.detail;
+      }
+    } catch {
+      message = await response.text();
+      if (!message.trim()) message = `Request failed: ${response.status}`;
+    }
+    throw new Error(message);
+  }
+  return (await response.json()) as { job_id: number };
+}
+
+export async function fetchRetroClassificationJob(jobId: number): Promise<RetroClassificationJob> {
+  return getJson<RetroClassificationJob>(`/cleanup/retroactive/${jobId}`);
+}
+
+export async function fetchRetroClassificationJobs(limit?: number): Promise<RetroClassificationJob[]> {
+  const q = typeof limit === "number" ? `?limit=${encodeURIComponent(String(limit))}` : "";
+  return getJson<RetroClassificationJob[]>(`/cleanup/retroactive${q}`);
+}
+
+export type GmailCategoryTab = "promotions" | "social" | "updates" | "forums";
+
+export type InboxInspectorResult = {
+  gmail_query: string;
+  fetched_count: number;
+  label_map: Record<string, string>;
+  messages: unknown[];
+};
+
+export async function fetchInboxInspector(body: {
+  date_from: string;
+  date_to: string;
   max_messages: number;
-}> {
-  return postJson("/cleanup/retroactive", body);
+  primary_only?: boolean;
+  important_only?: boolean;
+  include_categories?: GmailCategoryTab[];
+  exclude_categories?: GmailCategoryTab[];
+  custom_gmail_q?: string;
+  merge_date_range_with_custom?: boolean;
+}): Promise<InboxInspectorResult> {
+  return postJson("/debug/inbox", body);
 }
 
 // --- Restore (temporary) ---

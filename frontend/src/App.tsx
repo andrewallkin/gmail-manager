@@ -10,6 +10,7 @@ import { Login } from "./pages/Login";
 import { RestorePage } from "./pages/RestorePage";
 import { RulesPage } from "./pages/RulesPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { InboxInspectorPage } from "./pages/InboxInspectorPage";
 
 export default function App() {
   const [status, setStatus] = useState<Status | null | "loading">("loading");
@@ -65,6 +66,7 @@ export default function App() {
             path="settings"
             element={<SettingsPage status={status} onStatusChange={setStatus} />}
           />
+          <Route path="debug/inbox" element={<InboxInspectorPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

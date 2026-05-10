@@ -122,7 +122,6 @@ class GoogleService:
         if resp.status_code == 400:
             log.warning("Google refresh token expired/revoked for user=%s", user.email)
             user.google_auth_broken = True
-            user.polling_enabled = False
             db.commit()
             raise HTTPException(
                 status_code=401,

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.deps import require_jwt_user
 from app.models import SystemLabelRetention, User
+from app.services.triage import get_triage_labels
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 log = logging.getLogger("settings")
@@ -20,10 +21,12 @@ class SettingsOut(BaseModel):
     profile_picture_url: str | None
     ai_enabled: bool
     ai_provider: str | None
+    ai_api_key_configured: bool
     auto_remove_inbox_labeled_read: bool
     polling_enabled: bool
     polling_interval_minutes: int
     google_auth_broken: bool
+    triage_labels_ok: bool
 
     model_config = {"from_attributes": True}
 
@@ -51,7 +54,8 @@ class RetentionUpdate(BaseModel):
     items: list[RetentionItem]
 
 
-def _settings_out(user: User) -> SettingsOut:
+def _settings_out(user: User, db: Session) -> SettingsOut:
+    triage_labels_ok = get_triage_labels(db, user.id) is not None
     return SettingsOut(
         connected=user.google_id is not None,
         email=user.email,
@@ -59,18 +63,21 @@ def _settings_out(user: User) -> SettingsOut:
         profile_picture_url=user.profile_picture_url,
         ai_enabled=user.ai_enabled,
         ai_provider=user.ai_provider,
+        ai_api_key_configured=bool(user.ai_api_key),
         auto_remove_inbox_labeled_read=user.auto_remove_inbox_labeled_read,
         polling_enabled=user.polling_enabled,
         polling_interval_minutes=user.polling_interval_minutes,
         google_auth_broken=user.google_auth_broken,
+        triage_labels_ok=triage_labels_ok,
     )
 
 
 @router.get("")
 def get_settings(
+    db: Session = Depends(get_db),
     user: User = Depends(require_jwt_user),
 ) -> SettingsOut:
-    return _settings_out(user)
+    return _settings_out(user, db)
 
 
 @router.patch("")
@@ -79,22 +86,23 @@ def update_settings(
     db: Session = Depends(get_db),
     user: User = Depends(require_jwt_user),
 ) -> SettingsOut:
-    if body.ai_enabled is not None:
-        user.ai_enabled = body.ai_enabled
-    if body.ai_provider is not None:
-        user.ai_provider = body.ai_provider
-    if body.ai_api_key is not None:
-        user.ai_api_key = body.ai_api_key
-    if body.auto_remove_inbox_labeled_read is not None:
-        user.auto_remove_inbox_labeled_read = body.auto_remove_inbox_labeled_read
-    if body.polling_enabled is not None:
-        user.polling_enabled = body.polling_enabled
-    if body.polling_interval_minutes is not None:
-        user.polling_interval_minutes = max(1, min(60, body.polling_interval_minutes))
+    patch = body.model_dump(exclude_unset=True)
+    if "ai_enabled" in patch and patch["ai_enabled"] is not None:
+        user.ai_enabled = patch["ai_enabled"]
+    if "ai_provider" in patch:
+        user.ai_provider = patch["ai_provider"]
+    if "ai_api_key" in patch:
+        user.ai_api_key = patch["ai_api_key"]
+    if "auto_remove_inbox_labeled_read" in patch and patch["auto_remove_inbox_labeled_read"] is not None:
+        user.auto_remove_inbox_labeled_read = patch["auto_remove_inbox_labeled_read"]
+    if "polling_enabled" in patch and patch["polling_enabled"] is not None:
+        user.polling_enabled = patch["polling_enabled"]
+    if "polling_interval_minutes" in patch and patch["polling_interval_minutes"] is not None:
+        user.polling_interval_minutes = max(1, min(60, patch["polling_interval_minutes"]))
     db.commit()
     db.refresh(user)
     log.info("Settings updated for user=%s", user.email)
-    return _settings_out(user)
+    return _settings_out(user, db)
 
 
 VALID_CATEGORIES = {"promotions", "social", "updates", "forums"}

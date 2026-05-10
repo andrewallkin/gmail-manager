@@ -13,7 +13,7 @@ GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
 
 
 def parse_message_details(msg: dict) -> dict:
-    """Extract from/subject/body/label_ids/is_unread from a raw Gmail message."""
+    """Extract core headers/body/labels from a raw Gmail message."""
     headers = {}
     payload = msg.get("payload", {})
     for h in payload.get("headers", []):
@@ -44,6 +44,7 @@ def parse_message_details(msg: dict) -> dict:
     label_ids = msg.get("labelIds", [])
     return {
         "from": headers.get("from", ""),
+        "to": headers.get("to", ""),
         "subject": headers.get("subject", ""),
         "body": body[:4000],
         "label_ids": label_ids,

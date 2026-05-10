@@ -1,17 +1,19 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import httpx
 import logging
-from fastapi import Response
+from fastapi import HTTPException, Response
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import Base
-from app.models import Label, Rule, SystemLabelRetention, User
+from app.models import Label, RetroactiveClassificationJob, Rule, SystemLabelRetention, User
 from app.routers.auth import disconnect_google
 from app.routers import rules as rules_router
 from app.services.google_service import GoogleService
 from app.services import poller
+from app.services import message_pipeline as mp
+from app.services.rule_engine import apply_matching_rules, message_matches_rule
 
 
 def _make_db() -> Session:
@@ -106,9 +108,55 @@ def test_exchange_code_reuses_existing_user_by_email(monkeypatch) -> None:
     assert returned_user.google_id == "google-user-id"
     assert returned_user.access_token == "new-access-token"
     assert returned_user.refresh_token == "new-refresh-token"
+    assert returned_user.polling_enabled is True
 
 
-def test_poller_disables_polling_on_gmail_401(monkeypatch) -> None:
+def test_ensure_fresh_token_refresh_failure_preserves_polling_preference(monkeypatch) -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="old",
+        refresh_token="bad-refresh",
+        token_expiry=datetime(2000, 1, 1, tzinfo=timezone.utc),
+        polling_enabled=True,
+        google_auth_broken=False,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    class _Settings:
+        google_allowed_email = "andrewallkin@gmail.com"
+        public_base_url = "http://localhost:8003"
+        google_client_id = "cid"
+        google_client_secret = "csecret"
+        google_scopes = "openid email profile"
+
+    def _fake_post(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return httpx.Response(
+            400,
+            request=httpx.Request("POST", "https://oauth2.googleapis.com/token"),
+            json={"error": "invalid_grant"},
+        )
+
+    monkeypatch.setattr("app.services.google_service.get_settings", lambda: _Settings())
+    monkeypatch.setattr("app.services.google_service.httpx.post", _fake_post)
+
+    service = GoogleService()
+    try:
+        service.ensure_fresh_token(db, user)
+    except HTTPException as exc:
+        assert exc.status_code == 401
+    else:
+        raise AssertionError("expected HTTPException")
+
+    db.refresh(user)
+    assert user.google_auth_broken is True
+    assert user.polling_enabled is True
+
+
+def test_poller_marks_auth_broken_on_gmail_401_preserves_polling_preference(monkeypatch) -> None:
     db = _make_db()
     user = User(
         google_id="gid-1",
@@ -141,7 +189,8 @@ def test_poller_disables_polling_on_gmail_401(monkeypatch) -> None:
     refreshed_user = db.scalar(select(User).where(User.id == user_id).limit(1))
 
     assert refreshed_user is not None
-    assert refreshed_user.polling_enabled is False
+    assert refreshed_user.polling_enabled is True
+    assert refreshed_user.google_auth_broken is True
     assert user_id not in poller._last_poll_per_user
 
 
@@ -237,6 +286,48 @@ def test_poller_skips_disconnected_user_rows(monkeypatch) -> None:
     poller._run_poll_cycle()
 
     assert called_user_ids == [connected.id]
+
+
+def test_poller_skips_google_auth_broken_users(monkeypatch) -> None:
+    db = _make_db()
+    broken = User(
+        google_id="gid-broken",
+        email="broken@example.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        google_auth_broken=True,
+        polling_interval_minutes=1,
+    )
+    ok = User(
+        google_id="gid-ok",
+        email="ok@example.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        google_auth_broken=False,
+        polling_interval_minutes=1,
+    )
+    db.add_all([broken, ok])
+    db.commit()
+    db.refresh(broken)
+    db.refresh(ok)
+
+    called_user_ids: list[int] = []
+
+    def _fake_session_local() -> Session:
+        return db
+
+    def _capture_user(polled_user: User, *args, **kwargs):  # type: ignore[no-untyped-def]
+        called_user_ids.append(polled_user.id)
+
+    monkeypatch.setattr(poller, "SessionLocal", _fake_session_local)
+    monkeypatch.setattr(poller, "_poll_user", _capture_user)
+    poller._last_poll_per_user.clear()
+
+    poller._run_poll_cycle()
+
+    assert called_user_ids == [ok.id]
 
 
 def test_poll_user_logs_noop_history_and_messages(monkeypatch, caplog) -> None:
@@ -470,6 +561,99 @@ def test_run_rule_excludes_action_label_from_query(monkeypatch) -> None:
     assert result["processed"] == 1
 
 
+def test_run_rule_includes_excluded_sender_query_terms(monkeypatch) -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    rule = Rule(
+        user_id=user.id,
+        name="Exclude noisy senders",
+        match_from="news@dailymaverick.co.za",
+        match_from_exclude="noreply@dailymaverick.co.za, digest@dailymaverick.co.za",
+    )
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+
+    seen_queries: list[str] = []
+
+    class _FakeGmailService:
+        def __init__(self, _db: Session) -> None:
+            pass
+
+        def list_messages(
+            self,
+            _user: User,
+            query: str = "",
+            max_results: int = 100,
+            page_token: str | None = None,
+        ) -> dict:
+            assert max_results == 100
+            assert page_token is None
+            seen_queries.append(query)
+            return {"messages": []}
+
+    monkeypatch.setattr(rules_router, "GmailService", _FakeGmailService)
+    result = rules_router.run_rule(rule.id, db=db, user=user)
+
+    assert len(seen_queries) == 1
+    assert "from:news@dailymaverick.co.za" in seen_queries[0]
+    assert "-from:(noreply@dailymaverick.co.za OR digest@dailymaverick.co.za)" in seen_queries[0]
+    assert result["matched"] == 0
+    assert result["processed"] == 0
+
+
+def test_message_matches_rule_excludes_sender_substring() -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    rule = Rule(
+        user_id=user.id,
+        name="Exclude sender substring",
+        match_from="example.com",
+        match_from_exclude="noreply",
+        scope="all_inbox",
+    )
+    db.add(rule)
+    db.commit()
+
+    excluded_details = {
+        "from": "NoReply <noreply@example.com>",
+        "subject": "Newsletter",
+        "body": "Body",
+        "label_ids": ["INBOX"],
+    }
+    allowed_details = {
+        "from": "Team <team@example.com>",
+        "subject": "Newsletter",
+        "body": "Body",
+        "label_ids": ["INBOX"],
+    }
+
+    assert message_matches_rule(rule, excluded_details, db) is False
+    assert message_matches_rule(rule, allowed_details, db) is True
+
+
 def test_retention_cleanup_paginates_all_pages() -> None:
     db = _make_db()
     user = User(
@@ -701,6 +885,55 @@ def test_label_retention_cleanup() -> None:
     assert gmail.trashed_batches == [["m-1", "m-2"]]
 
 
+def test_label_retention_cleanup_read_only_scope_query() -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    label = Label(
+        user_id=user.id,
+        gmail_label_id="Label_42",
+        name="Newsletters",
+        label_type="user",
+        retention_days=14,
+        retention_scope="read_only",
+    )
+    db.add(label)
+    db.commit()
+
+    class _FakeGmailService:
+        def __init__(self) -> None:
+            self.seen_queries: list[str] = []
+
+        def list_messages(
+            self,
+            _user: User,
+            query: str = "",
+            max_results: int = 100,
+            page_token: str | None = None,
+        ) -> dict:
+            self.seen_queries.append(query)
+            return {"messages": []}
+
+        def batch_trash_messages(self, *_args) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+    gmail = _FakeGmailService()
+    poller._run_label_retention_cleanup(user, gmail, db)
+
+    assert len(gmail.seen_queries) == 1
+    assert "is:read" in gmail.seen_queries[0]
+
+
 def test_preview_rule_counts_all_pages(monkeypatch) -> None:
     db = _make_db()
     user = User(
@@ -759,3 +992,520 @@ def test_preview_rule_counts_all_pages(monkeypatch) -> None:
     assert page_tokens_seen == [None, "page-2"]
     assert result.estimated_count == 3
     assert result.sample_subjects == ["subject-m-1", "subject-m-2"]
+
+
+def test_message_matches_rule_includes_to_header() -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    rule = Rule(
+        user_id=user.id,
+        name="Match to header",
+        match_to="alerts@example.com,team@example.com",
+        scope="all_inbox",
+    )
+    db.add(rule)
+    db.commit()
+
+    matching_details = {
+        "from": "sender@example.com",
+        "to": "Team <team@example.com>",
+        "subject": "Update",
+        "body": "Body",
+        "label_ids": ["INBOX"],
+    }
+    non_matching_details = {
+        "from": "sender@example.com",
+        "to": "other@example.com",
+        "subject": "Update",
+        "body": "Body",
+        "label_ids": ["INBOX"],
+    }
+
+    assert message_matches_rule(rule, matching_details, db) is True
+    assert message_matches_rule(rule, non_matching_details, db) is False
+
+
+def test_apply_matching_rules_continues_until_stop_on_match() -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+    )
+    first_label = Label(user_id=1, gmail_label_id="Label_1", name="First")
+    second_label = Label(user_id=1, gmail_label_id="Label_2", name="Second")
+    db.add_all([user])
+    db.commit()
+    first_label.user_id = user.id
+    second_label.user_id = user.id
+    db.add_all([first_label, second_label])
+    db.commit()
+    db.refresh(first_label)
+    db.refresh(second_label)
+
+    first_rule = Rule(
+        user_id=user.id,
+        name="First",
+        match_from="example.com",
+        action_label_id=first_label.id,
+        stop_on_match=False,
+        scope="all_inbox",
+    )
+    second_rule = Rule(
+        user_id=user.id,
+        name="Second",
+        match_from="example.com",
+        action_label_id=second_label.id,
+        stop_on_match=True,
+        scope="all_inbox",
+    )
+    db.add_all([first_rule, second_rule])
+    db.commit()
+
+    class _FakeGmailService:
+        def __init__(self) -> None:
+            self.modified_calls: list[dict] = []
+
+        def batch_modify_messages(
+            self,
+            _user: User,
+            msg_ids: list[str],
+            add_labels: list[str] | None = None,
+            remove_labels: list[str] | None = None,
+        ) -> None:
+            self.modified_calls.append({
+                "msg_ids": msg_ids,
+                "add_labels": add_labels,
+                "remove_labels": remove_labels,
+            })
+
+        def batch_trash_messages(self, _user: User, _msg_ids: list[str]) -> None:
+            raise AssertionError("trash not expected")
+
+    gmail = _FakeGmailService()
+    matched_rule_ids = apply_matching_rules(
+        [first_rule, second_rule],
+        "msg-1",
+        {
+            "from": "alerts@example.com",
+            "to": "me@example.com",
+            "subject": "newsletter",
+            "body": "hello",
+            "label_ids": ["INBOX"],
+            "is_unread": False,
+        },
+        gmail,  # type: ignore[arg-type]
+        user,
+        db,
+    )
+
+    assert matched_rule_ids == [first_rule.id, second_rule.id]
+    assert len(gmail.modified_calls) == 2
+    assert gmail.modified_calls[0]["add_labels"] == ["Label_1"]
+    assert gmail.modified_calls[1]["add_labels"] == ["Label_2"]
+
+
+def test_apply_matching_rules_stops_after_first_stop_on_match_rule() -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    first_rule = Rule(
+        user_id=user.id,
+        name="First",
+        match_from="example.com",
+        action_archive=True,
+        stop_on_match=True,
+        scope="all_inbox",
+    )
+    second_rule = Rule(
+        user_id=user.id,
+        name="Second",
+        match_from="example.com",
+        action_delete=True,
+        stop_on_match=False,
+        scope="all_inbox",
+    )
+    db.add_all([first_rule, second_rule])
+    db.commit()
+
+    class _FakeGmailService:
+        def __init__(self) -> None:
+            self.modified_calls: list[dict] = []
+            self.trashed_calls = 0
+
+        def batch_modify_messages(
+            self,
+            _user: User,
+            msg_ids: list[str],
+            add_labels: list[str] | None = None,
+            remove_labels: list[str] | None = None,
+        ) -> None:
+            self.modified_calls.append({
+                "msg_ids": msg_ids,
+                "add_labels": add_labels,
+                "remove_labels": remove_labels,
+            })
+
+        def batch_trash_messages(self, _user: User, _msg_ids: list[str]) -> None:
+            self.trashed_calls += 1
+
+    gmail = _FakeGmailService()
+    matched_rule_ids = apply_matching_rules(
+        [first_rule, second_rule],
+        "msg-1",
+        {
+            "from": "alerts@example.com",
+            "to": "me@example.com",
+            "subject": "newsletter",
+            "body": "hello",
+            "label_ids": ["INBOX"],
+            "is_unread": False,
+        },
+        gmail,  # type: ignore[arg-type]
+        user,
+        db,
+    )
+
+    assert matched_rule_ids == [first_rule.id]
+    assert len(gmail.modified_calls) == 1
+    assert gmail.trashed_calls == 0
+
+
+def test_reorder_rules_normalizes_all_priorities() -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    first = Rule(user_id=user.id, name="First", priority=10)
+    second = Rule(user_id=user.id, name="Second", priority=20)
+    third = Rule(user_id=user.id, name="Third", priority=30)
+    db.add_all([first, second, third])
+    db.commit()
+
+    result = rules_router.reorder_rules(
+        rules_router.ReorderRequest(rule_ids=[third.id]),
+        db=db,
+        user=user,
+    )
+
+    db.refresh(first)
+    db.refresh(second)
+    db.refresh(third)
+
+    assert result["reordered"] is True
+    assert result["rule_ids"] == [third.id, first.id, second.id]
+    assert third.priority == 0
+    assert first.priority == 1
+    assert second.priority == 2
+
+
+def test_reorder_rules_rejects_invalid_ids() -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    db.add(Rule(user_id=user.id, name="Rule 1", priority=0))
+    db.commit()
+
+    try:
+        rules_router.reorder_rules(
+            rules_router.ReorderRequest(rule_ids=[99999]),
+            db=db,
+            user=user,
+        )
+    except HTTPException as exc:
+        assert exc.status_code == 400
+    else:
+        raise AssertionError("expected HTTPException")
+
+
+def test_retro_job_worker_orders_rules(monkeypatch) -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="andrewallkin@gmail.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+        ai_enabled=False,
+        ai_api_key=None,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    lower_priority = Rule(user_id=user.id, name="Later", priority=5, enabled=True, scope="all_inbox")
+    higher_priority = Rule(user_id=user.id, name="First", priority=1, enabled=True, scope="all_inbox")
+    db.add_all([lower_priority, higher_priority])
+    db.commit()
+    db.refresh(lower_priority)
+    db.refresh(higher_priority)
+
+    job = RetroactiveClassificationJob(
+        user_id=user.id,
+        date_from=date.fromisoformat("2026-01-01"),
+        date_to=date.fromisoformat("2026-01-31"),
+        use_ai=False,
+        status="pending",
+        page_token=None,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    captured_rule_ids: list[int] | None = None
+
+    def _capture_rules(rules, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+        nonlocal captured_rule_ids
+        captured_rule_ids = [r.id for r in rules]
+        return []
+
+    monkeypatch.setattr(mp, "apply_matching_rules", _capture_rules)
+
+    class _FakeGmailService:
+        def __init__(self, _db: Session) -> None:
+            self._calls = 0
+
+        def list_messages(self, *_args, **_kwargs) -> dict:  # type: ignore[no-untyped-def]
+            self._calls += 1
+            if self._calls == 1:
+                return {"messages": [{"id": "msg-1"}], "nextPageToken": None}
+            return {"messages": []}
+
+        def get_message(self, _user: User, _msg_id: str, fmt: str = "full") -> dict:
+            return {
+                "labelIds": ["INBOX"],
+                "payload": {
+                    "headers": [
+                        {"name": "From", "value": "alerts@example.com"},
+                        {"name": "To", "value": "me@example.com"},
+                        {"name": "Subject", "value": "hello"},
+                    ],
+                    "body": {},
+                },
+            }
+
+    monkeypatch.setattr(poller, "GmailService", _FakeGmailService)
+    gmail = poller.GmailService(db)
+
+    poller._advance_retroactive_classification_jobs(user, gmail, db, cycle_id="test")
+
+    db.refresh(job)
+    assert captured_rule_ids == [higher_priority.id, lower_priority.id]
+    assert job.status == "completed"
+    assert job.processed_count >= 1
+
+
+def test_retro_job_counts_ai_triage_buckets(monkeypatch) -> None:
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="u@example.com",
+        access_token="token",
+        refresh_token="refresh",
+        polling_enabled=True,
+        polling_interval_minutes=1,
+        ai_enabled=True,
+        ai_api_key="sk-test",
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    trash_label = Label(
+        user_id=user.id,
+        gmail_label_id="GTrash",
+        name="Action/Triage-Trash",
+        label_type="user",
+    )
+    temp_label = Label(
+        user_id=user.id,
+        gmail_label_id="GTemp",
+        name="Action/Triage-Temporary",
+        label_type="user",
+    )
+    db.add_all([trash_label, temp_label])
+    db.commit()
+
+    job = RetroactiveClassificationJob(
+        user_id=user.id,
+        date_from=date.fromisoformat("2026-01-01"),
+        date_to=date.fromisoformat("2026-01-31"),
+        use_ai=True,
+        status="pending",
+        page_token=None,
+        processed_count=0,
+        rule_matched_count=0,
+        ai_classified_count=0,
+        ai_trash_count=0,
+        ai_temporary_count=0,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    class _FakeAIService:
+        def classify_triage_email(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            return "GTemp"
+
+    monkeypatch.setattr(poller, "AIService", lambda _api_key: _FakeAIService())
+    monkeypatch.setattr(mp, "apply_matching_rules", lambda *_a, **_k: [])  # type: ignore[no-untyped-def]
+
+    class _FakeGmailService:
+        def __init__(self, _db: Session) -> None:
+            self._list_calls = 0
+
+        def list_messages(self, *_args, **_kwargs) -> dict:  # type: ignore[no-untyped-def]
+            self._list_calls += 1
+            if self._list_calls == 1:
+                return {"messages": [{"id": "msg-1"}], "nextPageToken": None}
+            return {"messages": []}
+
+        def get_message(self, _user: User, _msg_id: str, fmt: str = "full") -> dict:
+            return {
+                "labelIds": ["INBOX"],
+                "payload": {
+                    "headers": [
+                        {"name": "From", "value": "promo@test"},
+                        {"name": "Subject", "value": "hi"},
+                    ],
+                    "body": {},
+                },
+            }
+
+        def modify_message(self, *_args, **_kwargs) -> dict:  # type: ignore[no-untyped-def]
+            return {}
+
+    monkeypatch.setattr(poller, "GmailService", _FakeGmailService)
+    gmail = poller.GmailService(db)
+
+    poller._advance_retroactive_classification_jobs(user, gmail, db, cycle_id="test")
+
+    db.refresh(job)
+    assert job.status == "completed"
+    assert job.ai_classified_count == 1
+    assert job.ai_trash_count == 0
+    assert job.ai_temporary_count == 1
+
+
+def test_pipeline_ai_triage_removes_inbox_for_promotions_tab(monkeypatch) -> None:
+    import logging
+    from unittest.mock import MagicMock
+
+    from app.services.message_pipeline import process_message_rules_and_triage
+
+    db = _make_db()
+    user = User(
+        google_id="gid-1",
+        email="u@example.com",
+        access_token="t",
+        refresh_token="r",
+        polling_enabled=False,
+        ai_enabled=True,
+        ai_api_key="sk-test",
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    trash_label = Label(
+        user_id=user.id,
+        gmail_label_id="GTrash",
+        name="Action/Triage-Trash",
+        label_type="user",
+    )
+    temp_label = Label(
+        user_id=user.id,
+        gmail_label_id="GTemp",
+        name="Action/Triage-Temporary",
+        label_type="user",
+    )
+    db.add_all([trash_label, temp_label])
+    db.commit()
+
+    class _FakeGmailService:
+        def __init__(self) -> None:
+            self.modify_calls: list[tuple[list[str] | None, list[str] | None]] = []
+
+        def modify_message(self, _user: User, _msg_id: str, **kwargs):  # type: ignore[no-untyped-def]
+            self.modify_calls.append((kwargs.get("add_labels"), kwargs.get("remove_labels")))
+            return {}
+
+    ai = MagicMock()
+    ai.classify_triage_email.return_value = "GTrash"
+
+    monkeypatch.setattr(mp, "apply_matching_rules", lambda *_a, **_k: [])  # type: ignore[no-untyped-def]
+
+    gmail = _FakeGmailService()
+    details = {
+        "from": "promo@test",
+        "to": "me",
+        "subject": "deal",
+        "body": "buy",
+        "label_ids": ["INBOX", "CATEGORY_PROMOTIONS"],
+        "is_unread": True,
+    }
+
+    out = process_message_rules_and_triage(
+        log=logging.getLogger("test"),
+        gmail=gmail,  # type: ignore[arg-type]
+        user=user,
+        db=db,
+        msg_id="m1",
+        details=details,
+        rules=[],
+        triage_labels=(trash_label, temp_label),
+        ai_service=ai,
+        user_ai_allowed=True,
+        retro_skip_ai=False,
+        cycle_id="c",
+    )
+
+    assert out.kind == "ai_triage"
+    assert out.triage_chosen_gmail_label_id == "GTrash"
+    adds, removes = gmail.modify_calls[0]
+    assert adds == ["GTrash"]
+    assert removes == ["INBOX"]

@@ -20,6 +20,7 @@ class RuleCreate(BaseModel):
     name: str
     enabled: bool = True
     match_from: str | None = None
+    match_from_exclude: str | None = None
     match_to: str | None = None
     match_subject: str | None = None
     match_has_words: str | None = None
@@ -29,6 +30,7 @@ class RuleCreate(BaseModel):
     action_archive: bool = False
     action_delete: bool = False
     action_mark_read: bool = False
+    stop_on_match: bool = False
     scope: str = "primary"
     use_ai: bool = False
     ai_prompt: str | None = None
@@ -44,6 +46,7 @@ class RuleOut(BaseModel):
     name: str
     enabled: bool
     match_from: str | None
+    match_from_exclude: str | None
     match_to: str | None
     match_subject: str | None
     match_has_words: str | None
@@ -53,6 +56,7 @@ class RuleOut(BaseModel):
     action_archive: bool
     action_delete: bool
     action_mark_read: bool
+    stop_on_match: bool
     scope: str
     use_ai: bool
     ai_prompt: str | None
@@ -108,13 +112,26 @@ def reorder_rules(
     db: Session = Depends(get_db),
     user: User = Depends(require_jwt_user),
 ) -> dict:
-    rules = db.scalars(select(Rule).where(Rule.user_id == user.id)).all()
+    rules = db.scalars(
+        select(Rule)
+        .where(Rule.user_id == user.id)
+        .order_by(Rule.priority.asc(), Rule.created_at.asc())
+    ).all()
     rule_map = {r.id: r for r in rules}
-    for idx, rule_id in enumerate(body.rule_ids):
-        if rule_id in rule_map:
-            rule_map[rule_id].priority = idx
+    if len(body.rule_ids) != len(set(body.rule_ids)):
+        raise HTTPException(status_code=400, detail="Duplicate rule IDs are not allowed")
+
+    unknown_rule_ids = [rule_id for rule_id in body.rule_ids if rule_id not in rule_map]
+    if unknown_rule_ids:
+        raise HTTPException(status_code=400, detail="One or more rules are invalid")
+
+    provided_rule_ids = set(body.rule_ids)
+    ordered_rule_ids = body.rule_ids + [rule.id for rule in rules if rule.id not in provided_rule_ids]
+    for idx, rule_id in enumerate(ordered_rule_ids):
+        rule_map[rule_id].priority = idx
+
     db.commit()
-    return {"reordered": True}
+    return {"reordered": True, "rule_ids": ordered_rule_ids}
 
 
 @router.post("/preview")

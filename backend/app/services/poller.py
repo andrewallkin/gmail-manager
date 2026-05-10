@@ -9,11 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
-from app.models import Label, Rule, SystemLabelRetention, User
+from app.models import Label, RetroactiveClassificationJob, Rule, SystemLabelRetention, User
 from app.services.ai_service import AIService
 from app.services.gmail_service import GmailService, parse_message_details
-from app.services.inbox_rules import is_primary_inbox_message
-from app.services.rule_engine import apply_rule_actions, message_matches_rule
+from app.services.message_pipeline import process_message_rules_and_triage
+from app.services.triage import get_triage_labels
 
 log = logging.getLogger("poller")
 
@@ -22,6 +22,190 @@ _running = False
 _last_poll_per_user: dict[int, datetime] = {}
 
 POLL_INTERVAL_SECONDS = 60
+RETRO_CLASSIFICATION_MESSAGES_PER_TICK = 35
+
+
+def _build_retro_inbox_query(date_from, date_to) -> str:  # type: ignore[no-untyped-def]
+    ds = date_from.strftime("%Y/%m/%d")
+    de = date_to.strftime("%Y/%m/%d")
+    return f"in:inbox after:{ds} before:{de}"
+
+
+def _advance_retroactive_classification_jobs(
+    user: User,
+    gmail: GmailService,
+    db,
+    *,
+    cycle_id: str,
+) -> None:
+    """Process one paginated chunk of the user's retro classification job."""
+    log_retro = logging.getLogger("cleanup")
+    job = db.scalar(
+        select(RetroactiveClassificationJob)
+        .where(
+            RetroactiveClassificationJob.user_id == user.id,
+            RetroactiveClassificationJob.status.in_(("pending", "running")),
+        )
+        .order_by(RetroactiveClassificationJob.id.asc())
+        .limit(1)
+    )
+    if not job:
+        return
+
+    job_id_early = job.id
+
+    rules = db.scalars(
+        select(Rule)
+        .where(Rule.user_id == user.id, Rule.enabled == True)  # noqa: E712
+        .order_by(Rule.priority.asc(), Rule.created_at.asc())
+    ).all()
+    triage_labels = get_triage_labels(db, user.id)
+    user_ai_allowed = bool(user.ai_enabled and user.ai_api_key)
+    ai_service = AIService(user.ai_api_key) if user_ai_allowed else None
+
+    try:
+        if job.status == "pending":
+            job.status = "running"
+
+        query = _build_retro_inbox_query(job.date_from, job.date_to)
+
+        log_retro.info(
+            "event=retro_job_batch_started cycle_id=%s user=%s job_id=%s processed_count=%s has_page_token=%s",
+            cycle_id,
+            user.email,
+            job.id,
+            job.processed_count,
+            bool(job.page_token),
+        )
+
+        try:
+            result = gmail.list_messages(
+                user,
+                query=query,
+                max_results=RETRO_CLASSIFICATION_MESSAGES_PER_TICK,
+                page_token=job.page_token,
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 429:
+                log_retro.warning(
+                    "event=retro_job_throttled cycle_id=%s user=%s job_id=%s",
+                    cycle_id,
+                    user.email,
+                    job.id,
+                )
+                db.commit()
+                return
+            raise
+
+        messages = result.get("messages") or []
+        next_page_token = result.get("nextPageToken")
+
+        retro_skip_ai = not job.use_ai
+        ai_for_pipe = ai_service if not retro_skip_ai else None
+        allowed_ai = user_ai_allowed and not retro_skip_ai
+
+        processed_this_batch = 0
+        rule_matched_this_batch = 0
+        ai_this_batch = 0
+        ai_trash_this_batch = 0
+        ai_temp_this_batch = 0
+
+        for msg_ref in messages:
+            mid = msg_ref["id"]
+            try:
+                raw_msg = gmail.get_message(user, mid)
+                details = parse_message_details(raw_msg)
+                out = process_message_rules_and_triage(
+                    log=log_retro,
+                    gmail=gmail,
+                    user=user,
+                    db=db,
+                    msg_id=mid,
+                    details=details,
+                    rules=rules,
+                    triage_labels=triage_labels,
+                    ai_service=ai_for_pipe,
+                    user_ai_allowed=allowed_ai,
+                    retro_skip_ai=retro_skip_ai,
+                    cycle_id=cycle_id,
+                    job_id=job.id,
+                )
+                processed_this_batch += 1
+                if out.kind == "rule_applied":
+                    rule_matched_this_batch += 1
+                if out.kind == "ai_triage":
+                    ai_this_batch += 1
+                    chosen_id = out.triage_chosen_gmail_label_id
+                    if triage_labels is not None:
+                        trash_label, temporary_label = triage_labels
+                        if chosen_id == trash_label.gmail_label_id:
+                            ai_trash_this_batch += 1
+                        elif chosen_id == temporary_label.gmail_label_id:
+                            ai_temp_this_batch += 1
+                        else:
+                            log_retro.warning(
+                                "event=retro_job_ai_unknown_label cycle_id=%s user=%s job_id=%s label_id=%s",
+                                cycle_id,
+                                user.email,
+                                job.id,
+                                chosen_id,
+                            )
+            except Exception as exc:
+                log_retro.exception(
+                    "event=retro_job_message_failed cycle_id=%s job_id=%s msg_id=%s error=%s",
+                    cycle_id,
+                    job.id,
+                    mid,
+                    exc,
+                )
+                job.status = "failed"
+                job.error_message = str(exc)
+                job.completed_at = datetime.now(timezone.utc)
+                db.commit()
+                return
+
+        job.processed_count += processed_this_batch
+        job.rule_matched_count += rule_matched_this_batch
+        job.ai_classified_count += ai_this_batch
+        job.ai_trash_count += ai_trash_this_batch
+        job.ai_temporary_count += ai_temp_this_batch
+        job.page_token = next_page_token
+
+        if not messages:
+            job.status = "completed"
+            job.completed_at = datetime.now(timezone.utc)
+            job.page_token = None
+        elif not next_page_token:
+            job.status = "completed"
+            job.completed_at = datetime.now(timezone.utc)
+            job.page_token = None
+
+        db.commit()
+        log_retro.info(
+            "event=retro_job_batch_finished cycle_id=%s user=%s job_id=%s batch_processed=%d "
+            "page_token_kept=%s job_status=%s",
+            cycle_id,
+            user.email,
+            job.id,
+            processed_this_batch,
+            bool(job.page_token) if job.status == "running" else False,
+            job.status,
+        )
+    except Exception as exc:
+        log_retro.error(
+            "event=retro_job_failed cycle_id=%s user=%s job_id=%s error=%s",
+            cycle_id,
+            user.email,
+            job.id,
+            exc,
+        )
+        db.rollback()
+        job_row = db.get(RetroactiveClassificationJob, job_id_early)
+        if job_row is not None and job_row.status not in ("completed", "failed"):
+            job_row.status = "failed"
+            job_row.error_message = str(exc)
+            job_row.completed_at = datetime.now(timezone.utc)
+            db.commit()
 
 
 def start_poller() -> None:
@@ -68,6 +252,7 @@ def _run_poll_cycle() -> None:
         users = db.scalars(
             select(User).where(
                 User.polling_enabled == True,  # noqa: E712
+                User.google_auth_broken == False,  # noqa: E712
                 User.google_id.isnot(None),
                 User.access_token.isnot(None),
                 User.refresh_token.isnot(None),
@@ -105,11 +290,11 @@ def _run_poll_cycle() -> None:
             except httpx.HTTPStatusError as exc:
                 failed_users += 1
                 if exc.response.status_code == 401:
-                    user.polling_enabled = False
+                    user.google_auth_broken = True
                     db.commit()
                     _last_poll_per_user.pop(user.id, None)
                     log.warning(
-                        "event=poll_user_failed_auth_401 cycle_id=%s user=%s user_id=%s action=disabled_polling",
+                        "event=poll_user_failed_auth_401 cycle_id=%s user=%s user_id=%s action=marked_google_auth_broken",
                         cycle_id,
                         user.email,
                         user.id,
@@ -152,10 +337,10 @@ def _poll_user(user: User, db: Session, cycle_id: str = "manual") -> None:
     rules_loaded = 0
     message_processed = 0
     message_rule_applied = 0
-    message_ai_labeled = 0
-    message_ai_none = 0
-    message_no_rule_match = 0
-    message_skipped_non_primary = 0
+    message_ai_triage = 0
+    message_skipped_no_inbox = 0
+    message_triage_labels_missing = 0
+    message_ai_disabled = 0
     message_missing = 0
     message_error = 0
     history_records_count = 0
@@ -267,6 +452,25 @@ def _poll_user(user: User, db: Session, cycle_id: str = "manual") -> None:
             history_records_count,
         )
 
+    rules = db.scalars(
+        select(Rule)
+        .where(Rule.user_id == user.id, Rule.enabled == True)  # noqa: E712
+        .order_by(Rule.priority.asc(), Rule.created_at.asc())
+    ).all()
+    rules_loaded = len(rules)
+    if not rules:
+        log.info(
+            "event=poll_user_no_enabled_rules cycle_id=%s user=%s user_id=%s",
+            cycle_id,
+            user.email,
+            user.id,
+        )
+
+    triage_labels_pair = get_triage_labels(db, user.id)
+
+    ai_service_live = AIService(user.ai_api_key) if (user.ai_enabled and user.ai_api_key) else None
+    user_ai_live = bool(user.ai_enabled and user.ai_api_key and ai_service_live)
+
     if new_msg_ids:
         log.info(
             "event=poll_user_processing_messages cycle_id=%s user=%s user_id=%s new_messages=%d",
@@ -276,116 +480,36 @@ def _poll_user(user: User, db: Session, cycle_id: str = "manual") -> None:
             len(new_msg_ids),
         )
 
-        # Load enabled rules ordered by priority
-        rules = db.scalars(
-            select(Rule)
-            .where(Rule.user_id == user.id, Rule.enabled == True)  # noqa: E712
-            .order_by(Rule.priority.asc(), Rule.created_at.asc())
-        ).all()
-        rules_loaded = len(rules)
-        if not rules:
-            log.info(
-                "event=poll_user_no_enabled_rules cycle_id=%s user=%s user_id=%s",
-                cycle_id,
-                user.email,
-                user.id,
-            )
-
-        # Load user labels for AI
-        user_labels = db.scalars(
-            select(Label).where(Label.user_id == user.id, Label.label_type == "user")
-        ).all()
-        available_labels = [
-            {"id": l.gmail_label_id, "name": l.name, "description": l.ai_description}
-            for l in user_labels
-        ]
-        label_name_by_id = {l.gmail_label_id: l.name for l in user_labels}
-
-        ai_service = None
-        if user.ai_enabled and user.ai_api_key:
-            ai_service = AIService(user.ai_api_key)
-
         for msg_id in new_msg_ids:
             try:
                 message_processed += 1
                 raw_msg = gmail.get_message(user, msg_id)
                 details = parse_message_details(raw_msg)
 
-                # Never mark unread emails as read - skip action_mark_read for unread
-                is_unread = details["is_unread"]
-
-                # Try rules
-                rule_matched = False
-                for rule in rules:
-                    if message_matches_rule(rule, details, db):
-                        apply_rule_actions(
-                            rule,
-                            [msg_id],
-                            gmail,
-                            user,
-                            db,
-                            message_details_by_id={msg_id: details},
-                            skip_mark_read=is_unread and rule.action_mark_read,
-                        )
-                        rule_matched = True
-                        message_rule_applied += 1
-                        log.info(
-                            "event=message_processed cycle_id=%s user=%s user_id=%s msg_id=%s outcome=rule_applied rule_id=%s",
-                            cycle_id,
-                            user.email,
-                            user.id,
-                            msg_id,
-                            rule.id,
-                        )
-                        break
-
-                # AI classification for Primary inbox messages only
-                if not rule_matched and ai_service and available_labels:
-                    label_ids = details["label_ids"]
-                    is_primary = is_primary_inbox_message(label_ids)
-                    if is_primary:
-                        label_id = ai_service.classify_email(
-                            details["from"], details["subject"], details["body"],
-                            available_labels,
-                        )
-                        if label_id:
-                            gmail.modify_message(user, msg_id, add_labels=[label_id])
-                            message_ai_labeled += 1
-                            log.info(
-                                "event=message_processed cycle_id=%s user=%s user_id=%s msg_id=%s outcome=ai_labeled label_id=%s",
-                                cycle_id,
-                                user.email,
-                                user.id,
-                                msg_id,
-                                label_id,
-                            )
-                        else:
-                            message_ai_none += 1
-                            log.info(
-                                "event=message_processed cycle_id=%s user=%s user_id=%s msg_id=%s outcome=ai_none",
-                                cycle_id,
-                                user.email,
-                                user.id,
-                                msg_id,
-                            )
-                    else:
-                        message_skipped_non_primary += 1
-                        log.debug(
-                            "event=message_processed cycle_id=%s user=%s user_id=%s msg_id=%s outcome=skipped_non_primary",
-                            cycle_id,
-                            user.email,
-                            user.id,
-                            msg_id,
-                        )
-                elif not rule_matched:
-                    message_no_rule_match += 1
-                    log.info(
-                        "event=message_processed cycle_id=%s user=%s user_id=%s msg_id=%s outcome=no_rule_match",
-                        cycle_id,
-                        user.email,
-                        user.id,
-                        msg_id,
-                    )
+                pipe = process_message_rules_and_triage(
+                    log=log,
+                    gmail=gmail,
+                    user=user,
+                    db=db,
+                    msg_id=msg_id,
+                    details=details,
+                    rules=rules,
+                    triage_labels=triage_labels_pair,
+                    ai_service=ai_service_live,
+                    user_ai_allowed=user_ai_live,
+                    retro_skip_ai=False,
+                    cycle_id=cycle_id,
+                )
+                if pipe.kind == "rule_applied":
+                    message_rule_applied += 1
+                elif pipe.kind == "ai_triage":
+                    message_ai_triage += 1
+                elif pipe.kind == "skipped_no_inbox":
+                    message_skipped_no_inbox += 1
+                elif pipe.kind == "triage_labels_missing":
+                    message_triage_labels_missing += 1
+                elif pipe.kind == "ai_disabled":
+                    message_ai_disabled += 1
 
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == 404:
@@ -418,7 +542,7 @@ def _poll_user(user: User, db: Session, cycle_id: str = "manual") -> None:
                     exc,
                 )
 
-    # Run inbox removal sweep for read, classified emails
+    _advance_retroactive_classification_jobs(user, gmail, db, cycle_id=cycle_id)
     inbox_sweep_removed = 0
     inbox_sweep_found = 0
     if user.auto_remove_inbox_labeled_read:
@@ -450,7 +574,10 @@ def _poll_user(user: User, db: Session, cycle_id: str = "manual") -> None:
         )
 
     log.info(
-        "event=poll_user_finished cycle_id=%s user=%s user_id=%s new_messages=%d rules_loaded=%d message_processed=%d rule_applied=%d ai_labeled=%d ai_none=%d no_rule_match=%d skipped_non_primary=%d message_missing=%d message_error=%d inbox_sweep_found=%d inbox_sweep_removed=%d retention_rules=%d retention_trashed=%d label_retention_rules=%d label_retention_trashed=%d duration_ms=%d",
+        "event=poll_user_finished cycle_id=%s user=%s user_id=%s new_messages=%d rules_loaded=%d "
+        "message_processed=%d rule_applied=%d ai_triage=%d skipped_no_inbox=%d triage_labels_missing=%d "
+        "ai_disabled=%d message_missing=%d message_error=%d inbox_sweep_found=%d inbox_sweep_removed=%d "
+        "retention_rules=%d retention_trashed=%d label_retention_rules=%d label_retention_trashed=%d duration_ms=%d",
         cycle_id,
         user.email,
         user.id,
@@ -458,10 +585,10 @@ def _poll_user(user: User, db: Session, cycle_id: str = "manual") -> None:
         rules_loaded,
         message_processed,
         message_rule_applied,
-        message_ai_labeled,
-        message_ai_none,
-        message_no_rule_match,
-        message_skipped_non_primary,
+        message_ai_triage,
+        message_skipped_no_inbox,
+        message_triage_labels_missing,
+        message_ai_disabled,
         message_missing,
         message_error,
         inbox_sweep_found,
@@ -657,6 +784,10 @@ def _run_label_retention_cleanup(
         cutoff_str = cutoff.strftime("%Y/%m/%d")
         label_term = label.name.replace(" ", "-")
         query = f"label:{label_term} before:{cutoff_str}"
+        if label.retention_scope == "read_only":
+            query += " is:read"
+        elif label.retention_scope == "unread_only":
+            query += " is:unread"
 
         try:
             page_token = None

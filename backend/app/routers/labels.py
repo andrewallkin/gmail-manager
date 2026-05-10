@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -10,8 +11,10 @@ from app.db import get_db
 from app.deps import require_jwt_user
 from app.models import Label, User
 from app.services.gmail_service import GmailService
+from app.services.triage import ensure_gmail_triage_labels
 
 router = APIRouter(prefix="/api/labels", tags=["labels"])
+RetentionScope = Literal["all", "read_only", "unread_only"]
 log = logging.getLogger("labels")
 
 
@@ -27,6 +30,7 @@ class LabelUpdate(BaseModel):
     text_color: str | None = None
     ai_description: str | None = None
     retention_days: int | None = None
+    retention_scope: RetentionScope | None = None
 
 
 class LabelOut(BaseModel):
@@ -38,6 +42,7 @@ class LabelOut(BaseModel):
     color_text: str | None
     ai_description: str | None
     retention_days: int | None
+    retention_scope: str
     message_count: int
     unread_count: int
     synced_at: datetime | None
@@ -60,6 +65,7 @@ def sync_labels(
     user: User = Depends(require_jwt_user),
 ) -> dict:
     gmail = GmailService(db)
+    ensure_gmail_triage_labels(gmail, user)
     remote_labels = gmail.list_labels(user)
 
     synced = 0
@@ -154,6 +160,8 @@ def patch_label(
         label.ai_description = body.ai_description
     if "retention_days" in body.model_fields_set:
         label.retention_days = body.retention_days if body.retention_days else None
+    if "retention_scope" in body.model_fields_set:
+        label.retention_scope = body.retention_scope
     db.commit()
     db.refresh(label)
     log.info("Updated label '%s' for user=%s", label.name, user.email)

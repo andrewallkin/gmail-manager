@@ -1,18 +1,16 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date as date_type
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import require_jwt_user
-from app.models import CleanupJob, Label, Rule, User
-from app.services.ai_service import AIService
-from app.services.gmail_service import GmailService, parse_message_details
+from app.models import CleanupJob, RetroactiveClassificationJob, User
+from app.services.gmail_service import GmailService
 from app.services.query_utils import build_or_term
-from app.services.rule_engine import apply_rule_actions, message_matches_rule
 
 router = APIRouter(prefix="/api/cleanup", tags=["cleanup"])
 log = logging.getLogger("cleanup")
@@ -65,11 +63,37 @@ class PreviewResponse(BaseModel):
     messages: list[PreviewMessageSummary]
 
 
-class RetroactiveRequest(BaseModel):
+class RetroactiveJobCreate(BaseModel):
     date_from: str
     date_to: str
     use_ai: bool = False
-    max_messages: int = Field(default=50, ge=1, le=50)
+
+
+class RetroactiveJobOut(BaseModel):
+    id: int
+    date_from: date_type
+    date_to: date_type
+    use_ai: bool
+    status: str
+    page_token: str | None
+    processed_count: int
+    rule_matched_count: int
+    ai_classified_count: int
+    ai_trash_count: int
+    ai_temporary_count: int
+    error_message: str | None
+    created_at: datetime
+    completed_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class RetroactiveJobCreateResponse(BaseModel):
+    job_id: int
+
+
+def _parse_iso_date(raw: str) -> date_type:
+    return date_type.fromisoformat(raw.strip()[:10])
 
 
 def _build_cleanup_query(
@@ -128,112 +152,79 @@ def preview_cleanup(
 
 
 @router.post("/retroactive")
-def retroactive_classification(
-    body: RetroactiveRequest,
+def create_retroactive_job(
+    body: RetroactiveJobCreate,
     db: Session = Depends(get_db),
     user: User = Depends(require_jwt_user),
-) -> dict:
-    gmail = GmailService(db)
+) -> RetroactiveJobCreateResponse:
+    date_from_d = _parse_iso_date(body.date_from)
+    date_to_d = _parse_iso_date(body.date_to)
 
-    # Process Primary inbox emails (read and unread)
-    query = (
-        f"in:inbox -category:promotions -category:social -category:updates -category:forums "
-        f"after:{body.date_from[:10]} before:{body.date_to[:10]}"
-    )
-
-    rules = db.scalars(
-        select(Rule).where(Rule.user_id == user.id, Rule.enabled == True)  # noqa: E712
-    ).all()
-
-    ai_service = None
-    if body.use_ai and user.ai_enabled and user.ai_api_key:
-        ai_service = AIService(user.ai_api_key)
-
-    user_labels = db.scalars(
-        select(Label).where(Label.user_id == user.id, Label.label_type == "user")
-    ).all()
-    available_labels = [
-        {"id": l.gmail_label_id, "name": l.name, "description": l.ai_description}
-        for l in user_labels
-    ]
-    label_name_by_id = {l.gmail_label_id: l.name for l in user_labels}
-
-    total_processed = 0
-    rule_matched_count = 0
-    ai_classified_count = 0
-
-    page_token = None
-    while True:
-        remaining = body.max_messages - total_processed
-        if remaining <= 0:
-            break
-        result = gmail.list_messages(
-            user,
-            query=query,
-            max_results=min(50, remaining),
-            page_token=page_token,
+    blocked = db.scalar(
+        select(RetroactiveClassificationJob.id)
+        .where(
+            RetroactiveClassificationJob.user_id == user.id,
+            RetroactiveClassificationJob.status.in_(("pending", "running")),
         )
-        messages = result.get("messages", [])
-        if not messages:
-            break
-
-        for msg_ref in messages:
-            if total_processed >= body.max_messages:
-                break
-            try:
-                raw_msg = gmail.get_message(user, msg_ref["id"])
-                details = parse_message_details(raw_msg)
-
-                total_processed += 1
-
-                # Try rules first
-                matched = False
-                for rule in rules:
-                    if message_matches_rule(rule, details, db):
-                        apply_rule_actions(
-                            rule,
-                            [msg_ref["id"]],
-                            gmail,
-                            user,
-                            db,
-                            message_details_by_id={msg_ref["id"]: details},
-                            skip_mark_read=details["is_unread"] and rule.action_mark_read,
-                        )
-                        rule_matched_count += 1
-                        matched = True
-                        break
-
-                # AI fallback
-                if not matched and ai_service and available_labels:
-                    label_id = ai_service.classify_email(
-                        details["from"], details["subject"], details["body"],
-                        available_labels,
-                    )
-                    if label_id:
-                        gmail.modify_message(
-                            user,
-                            msg_ref["id"],
-                            add_labels=[label_id],
-                        )
-                        ai_classified_count += 1
-
-            except Exception as exc:
-                log.error("Retroactive processing failed for msg=%s: %s", msg_ref["id"], exc)
-
-        page_token = result.get("nextPageToken")
-        if not page_token:
-            break
-
-    log.info(
-        "Retroactive classification: processed=%d rule_matched=%d ai_classified=%d max=%d",
-        total_processed, rule_matched_count, ai_classified_count, body.max_messages,
+        .limit(1)
     )
-    return {
-        "total_processed": total_processed,
-        "rule_matched": rule_matched_count,
-        "ai_classified": ai_classified_count,
-        "max_messages": body.max_messages,
-    }
+    if blocked:
+        raise HTTPException(
+            status_code=409,
+            detail="A retroactive classification job is already queued or running for this account.",
+        )
+
+    job = RetroactiveClassificationJob(
+        user_id=user.id,
+        date_from=date_from_d,
+        date_to=date_to_d,
+        use_ai=body.use_ai,
+        status="pending",
+        page_token=None,
+        processed_count=0,
+        rule_matched_count=0,
+        ai_classified_count=0,
+        ai_trash_count=0,
+        ai_temporary_count=0,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    log.info("Retroactive classification job queued id=%s user=%s", job.id, user.email)
+    return RetroactiveJobCreateResponse(job_id=job.id)
+
+
+@router.get("/retroactive", response_model=list[RetroactiveJobOut])
+def list_retroactive_jobs(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_jwt_user),
+    limit: int = 100,
+) -> list[RetroactiveJobOut]:
+    capped = max(1, min(limit, 100))
+    jobs = db.scalars(
+        select(RetroactiveClassificationJob)
+        .where(RetroactiveClassificationJob.user_id == user.id)
+        .order_by(RetroactiveClassificationJob.created_at.desc())
+        .limit(capped)
+    ).all()
+    return [RetroactiveJobOut.model_validate(j) for j in jobs]
+
+
+@router.get("/retroactive/{job_id}")
+def get_retroactive_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_jwt_user),
+) -> RetroactiveJobOut:
+    job = db.scalar(
+        select(RetroactiveClassificationJob).where(
+            RetroactiveClassificationJob.id == job_id,
+            RetroactiveClassificationJob.user_id == user.id,
+        ).limit(1)
+    )
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return RetroactiveJobOut.model_validate(job)
 
 
 @router.post("")

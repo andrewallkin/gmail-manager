@@ -60,6 +60,7 @@ from app.routers.labels import router as labels_router
 from app.routers.restore import router as restore_router
 from app.routers.rules import router as rules_router
 from app.routers.settings import router as settings_router
+from app.routers.debug_gmail import router as debug_gmail_router
 
 app.include_router(auth_router)
 app.include_router(logout_router)
@@ -68,6 +69,7 @@ app.include_router(rules_router)
 app.include_router(cleanup_router)
 app.include_router(restore_router)
 app.include_router(settings_router)
+app.include_router(debug_gmail_router)
 
 
 @app.get("/api/health")

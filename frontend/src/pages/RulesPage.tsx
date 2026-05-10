@@ -1,16 +1,27 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  RuleItem, RuleCreate, LabelItem, PreviewResult,
-  fetchRules, fetchLabels, createRule, updateRule, deleteRule, runRule,
-  reorderRules, previewRule,
+  LabelItem,
+  PreviewResult,
+  RuleCreate,
+  RuleItem,
+  createRule,
+  deleteRule,
+  fetchLabels,
+  fetchRules,
+  previewRule,
+  reorderRules,
+  runRule,
+  updateRule,
 } from "../lib/api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { ReorderRulesDialog } from "../components/ReorderRulesDialog";
 import { parseUtcDate } from "../lib/format";
 
 const emptyRule: RuleCreate = {
   name: "",
   enabled: true,
   match_from: null,
+  match_from_exclude: null,
   match_to: null,
   match_subject: null,
   match_has_words: null,
@@ -20,98 +31,37 @@ const emptyRule: RuleCreate = {
   action_archive: false,
   action_delete: false,
   action_mark_read: false,
+  stop_on_match: false,
   scope: "all_inbox",
 };
 
 function relativeTime(dateStr: string | null): string {
   if (!dateStr) return "";
-  const now = Date.now();
-  const then = parseUtcDate(dateStr).getTime();
-  const diffMs = now - then;
-  const diffMin = Math.floor(diffMs / 60000);
+  const diffMin = Math.floor((Date.now() - parseUtcDate(dateStr).getTime()) / 60000);
   if (diffMin < 1) return "just now";
   if (diffMin < 60) return `${diffMin}m ago`;
   const diffHr = Math.floor(diffMin / 60);
   if (diffHr < 24) return `${diffHr}h ago`;
-  const diffDays = Math.floor(diffHr / 24);
-  return `${diffDays}d ago`;
+  return `${Math.floor(diffHr / 24)}d ago`;
 }
 
-function ChevronIcon({ open }: { open: boolean }) {
-  return (
-    <svg
-      className={`w-4 h-4 text-google-text-secondary transition-transform duration-200 ${open ? "rotate-90" : ""}`}
-      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
-    >
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-    </svg>
-  );
-}
-
-function GripIcon() {
-  return (
-    <svg className="w-4 h-4 text-google-text-tertiary" fill="currentColor" viewBox="0 0 24 24">
-      <circle cx="9" cy="5" r="1.5" />
-      <circle cx="15" cy="5" r="1.5" />
-      <circle cx="9" cy="12" r="1.5" />
-      <circle cx="15" cy="12" r="1.5" />
-      <circle cx="9" cy="19" r="1.5" />
-      <circle cx="15" cy="19" r="1.5" />
-    </svg>
-  );
-}
-
-function ChevronUpIcon() {
-  return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
-    </svg>
-  );
-}
-
-function ChevronDownIcon() {
-  return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-    </svg>
-  );
-}
-
-function CollapsibleSection({
-  title,
-  defaultOpen = true,
-  children,
-}: {
-  title: string;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div className="border border-google-border rounded-lg">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2 px-4 py-3 text-sm font-medium text-google-text-secondary hover:bg-google-hover transition-colors"
-      >
-        <ChevronIcon open={open} />
-        {title}
-      </button>
-      <div
-        className="overflow-hidden transition-all duration-200"
-        style={{ maxHeight: open ? "1000px" : "0", opacity: open ? 1 : 0 }}
-      >
-        <div className="px-4 pb-4 space-y-3">{children}</div>
-      </div>
-    </div>
-  );
+function Badge({ text, tone = "neutral" }: { text: string; tone?: "neutral" | "blue" | "green" | "red" | "yellow" | "purple" }) {
+  const styles = {
+    neutral: "bg-google-bg text-google-text-secondary",
+    blue: "bg-google-blue-light text-google-blue",
+    green: "bg-google-green-light text-google-green",
+    red: "bg-gmail-red-light text-gmail-red",
+    yellow: "bg-google-yellow-light text-google-yellow-text",
+    purple: "bg-purple-100 text-purple-700",
+  };
+  return <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${styles[tone]}`}>{text}</span>;
 }
 
 export function RulesPage() {
   const [rules, setRules] = useState<RuleItem[]>([]);
   const [labels, setLabels] = useState<LabelItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
+  const [selectedRuleId, setSelectedRuleId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<RuleCreate>(emptyRule);
   const [saving, setSaving] = useState(false);
@@ -121,62 +71,84 @@ export function RulesPage() {
   const [previewing, setPreviewing] = useState(false);
   const [confirmDeleteRule, setConfirmDeleteRule] = useState<RuleItem | null>(null);
   const [deletingRule, setDeletingRule] = useState(false);
-  const dragItem = useRef<number | null>(null);
-  const [dragOver, setDragOver] = useState<number | null>(null);
+  const [reorderOpen, setReorderOpen] = useState(false);
+  const [savingOrder, setSavingOrder] = useState(false);
   const runResultTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const userLabels = useMemo(
+    () => labels.filter((l) => l.label_type === "user").sort((a, b) => a.name.localeCompare(b.name)),
+    [labels]
+  );
+  const selectedRule = rules.find((rule) => rule.id === selectedRuleId) ?? null;
+  const isFormOpen = editingId !== null;
 
   const load = () => {
     setLoading(true);
     Promise.all([fetchRules(), fetchLabels()])
-      .then(([r, l]) => { setRules(r); setLabels(l); })
-      .catch(() => {})
+      .then(([rulesData, labelsData]) => {
+        setRules(rulesData);
+        setLabels(labelsData);
+      })
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+  }, []);
 
   useEffect(() => {
     if (!runResult) return;
-    runResultTimeoutRef.current = setTimeout(() => {
-      setRunResult(null);
-    }, 5000);
+    runResultTimeoutRef.current = setTimeout(() => setRunResult(null), 5000);
     return () => {
-      if (runResultTimeoutRef.current) {
-        clearTimeout(runResultTimeoutRef.current);
-      }
+      if (runResultTimeoutRef.current) clearTimeout(runResultTimeoutRef.current);
     };
   }, [runResult]);
 
   useEffect(() => {
-    if (!showForm) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeForm();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [showForm]);
-
-  const userLabels = labels
-    .filter((l) => l.label_type === "user")
-    .sort((a, b) => a.name.localeCompare(b.name));
+    if (selectedRuleId && !rules.some((rule) => rule.id === selectedRuleId)) {
+      setSelectedRuleId(null);
+    }
+  }, [rules, selectedRuleId]);
 
   const labelName = (id: number | null | undefined) => {
     if (!id) return null;
-    return labels.find(l => l.id === id)?.name ?? null;
+    return labels.find((label) => label.id === id)?.name ?? `#${id}`;
+  };
+
+  const summarizeConditions = (rule: RuleItem): string[] => {
+    const items: string[] = [];
+    if (rule.match_from) items.push(`From: ${rule.match_from}`);
+    if (rule.match_from_exclude) items.push(`Excludes: ${rule.match_from_exclude}`);
+    if (rule.match_to) items.push(`To: ${rule.match_to}`);
+    if (rule.match_subject) items.push(`Subject: ${rule.match_subject}`);
+    if (rule.match_label_id) items.push(`Label: ${labelName(rule.match_label_id)}`);
+    if (items.length === 0) items.push("No explicit conditions");
+    return items.slice(0, 3);
+  };
+
+  const summarizeActions = (rule: RuleItem): string[] => {
+    const items: string[] = [];
+    if (rule.action_label_id) items.push(`Apply ${labelName(rule.action_label_id)}`);
+    if (rule.action_archive) items.push("Archive");
+    if (rule.action_delete) items.push("Delete");
+    if (rule.action_mark_read) items.push("Mark read");
+    if (items.length === 0) items.push("No action");
+    return items;
   };
 
   const openCreate = () => {
+    setEditingId(-1);
     setForm(emptyRule);
-    setEditingId(null);
     setPreview(null);
-    setShowForm(true);
   };
 
   const openEdit = (rule: RuleItem) => {
+    setEditingId(rule.id);
     setForm({
       name: rule.name,
       enabled: rule.enabled,
       match_from: rule.match_from,
+      match_from_exclude: rule.match_from_exclude,
       match_to: rule.match_to,
       match_subject: rule.match_subject,
       match_has_words: rule.match_has_words,
@@ -186,33 +158,38 @@ export function RulesPage() {
       action_archive: rule.action_archive,
       action_delete: rule.action_delete,
       action_mark_read: rule.action_mark_read,
+      stop_on_match: rule.stop_on_match,
       scope: rule.scope,
       use_ai: rule.use_ai,
       ai_prompt: rule.ai_prompt,
       priority: rule.priority,
     });
-    setEditingId(rule.id);
     setPreview(null);
-    setShowForm(true);
+  };
+
+  const closeForm = () => {
+    setEditingId(null);
+    setPreview(null);
+  };
+
+  const updateField = <K extends keyof RuleCreate>(key: K, value: RuleCreate[K]) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
   };
 
   const handleSave = async () => {
-    if (!form.name.trim()) return;
+    if (!form.name?.trim()) return;
     setSaving(true);
     try {
-      if (editingId) {
-        await updateRule(editingId, form);
-      } else {
+      if (editingId === -1) {
         await createRule(form);
+      } else if (editingId) {
+        await updateRule(editingId, form);
       }
-      setShowForm(false);
-      setPreview(null);
+      closeForm();
       load();
-    } catch {} finally { setSaving(false); }
-  };
-
-  const handleDeleteClick = (rule: RuleItem) => {
-    setConfirmDeleteRule(rule);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDeleteConfirm = async () => {
@@ -221,8 +198,11 @@ export function RulesPage() {
     try {
       await deleteRule(confirmDeleteRule.id);
       setConfirmDeleteRule(null);
+      if (selectedRuleId === confirmDeleteRule.id) {
+        setSelectedRuleId(null);
+      }
       load();
-    } catch {} finally {
+    } finally {
       setDeletingRule(false);
     }
   };
@@ -232,84 +212,50 @@ export function RulesPage() {
     setRunResult(null);
     try {
       const result = await runRule(rule.id);
-      const msg = `Matched ${result.matched}, processed ${result.processed} messages across ${result.pages_scanned} page${result.pages_scanned === 1 ? "" : "s"}`;
-      setRunResult(result.query ? `${msg}\nQuery: ${result.query}` : msg);
-      load(); // Refresh to show updated stats
+      const message = `Matched ${result.matched}, processed ${result.processed} messages across ${result.pages_scanned} page${result.pages_scanned === 1 ? "" : "s"}`;
+      setRunResult(result.query ? `${message}\nQuery: ${result.query}` : message);
+      load();
     } catch {
       setRunResult("Failed to run rule");
-    } finally { setRunningId(null); }
+    } finally {
+      setRunningId(null);
+    }
   };
 
   const handlePreview = async () => {
     setPreviewing(true);
     setPreview(null);
     try {
-      const result = await previewRule(form);
-      setPreview(result);
+      setPreview(await previewRule(form));
     } catch {
       setPreview({ estimated_count: 0, query: "", sample_subjects: [] });
-    } finally { setPreviewing(false); }
+    } finally {
+      setPreviewing(false);
+    }
   };
 
-  const updateField = <K extends keyof RuleCreate>(key: K, value: RuleCreate[K]) => {
-    setForm(prev => ({ ...prev, [key]: value }));
-  };
-
-  const getScopeBadges = (rule: RuleItem) => {
-    return rule.scope === "all_inbox" ? ["All Inbox"] : ["Primary"];
-  };
-
-  // Drag and drop handlers
-  const handleDragStart = (idx: number) => {
-    dragItem.current = idx;
-  };
-
-  const handleDragOver = (e: React.DragEvent, idx: number) => {
-    e.preventDefault();
-    setDragOver(idx);
-  };
-
-  const handleDragEnd = () => {
-    dragItem.current = null;
-    setDragOver(null);
-  };
-
-  const handleDrop = async () => {
-    if (dragItem.current === null || dragOver === null || dragItem.current === dragOver) return;
-    const reordered = [...rules];
-    const [dragged] = reordered.splice(dragItem.current, 1);
-    reordered.splice(dragOver, 0, dragged);
-    setRules(reordered);
-    dragItem.current = null;
-    setDragOver(null);
-    try {
-      await reorderRules(reordered.map(r => r.id));
-    } catch {}
-  };
-
-  const handleMoveUp = async (idx: number) => {
-    if (idx <= 0) return;
-    const reordered = [...rules];
-    [reordered[idx - 1], reordered[idx]] = [reordered[idx], reordered[idx - 1]];
+  const persistReorder = async (previousRules: RuleItem[], reordered: RuleItem[]) => {
     setRules(reordered);
     try {
-      await reorderRules(reordered.map(r => r.id));
-    } catch {}
+      const result = await reorderRules(reordered.map((rule) => rule.id));
+      if (result.rule_ids?.length) {
+        const byId = new Map(reordered.map((rule) => [rule.id, rule]));
+        setRules(result.rule_ids.map((id) => byId.get(id)).filter(Boolean) as RuleItem[]);
+      }
+    } catch {
+      setRules(previousRules);
+      load();
+    }
   };
 
-  const handleMoveDown = async (idx: number) => {
-    if (idx >= rules.length - 1) return;
-    const reordered = [...rules];
-    [reordered[idx], reordered[idx + 1]] = [reordered[idx + 1], reordered[idx]];
-    setRules(reordered);
+  const handleSaveOrder = async (reordered: RuleItem[]) => {
+    setSavingOrder(true);
     try {
-      await reorderRules(reordered.map(r => r.id));
-    } catch {}
-  };
-
-  const closeForm = () => {
-    setShowForm(false);
-    setPreview(null);
+      await persistReorder(rules, reordered);
+      setReorderOpen(false);
+    } finally {
+      setSavingOrder(false);
+    }
   };
 
   if (loading) {
@@ -320,257 +266,42 @@ export function RulesPage() {
     );
   }
 
-  const formModal = showForm && (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40"
-      onClick={closeForm}
-    >
-      <div
-        className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 space-y-4"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2 className="text-lg font-semibold text-google-text">
-        {editingId ? "Edit Rule" : "Create Rule"}
-      </h2>
-
-      {/* Rule Name */}
-      <div>
-        <label className="block text-sm font-medium text-google-text-secondary mb-1">Rule Name</label>
-        <input
-          type="text"
-          value={form.name}
-          onChange={(e) => updateField("name", e.target.value)}
-          placeholder="e.g., Archive newsletters"
-          className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
-        />
-      </div>
-
-      {/* Conditions Section */}
-      <CollapsibleSection title="Conditions">
-        <div className="space-y-3">
-          <div>
-            <label className="block text-xs font-medium text-google-text-secondary mb-1">From (email/domain)</label>
-            <input
-              type="text"
-              value={form.match_from ?? ""}
-              onChange={(e) => updateField("match_from", e.target.value || null)}
-              placeholder="e.g., newsletter@example.com, alerts@example.com"
-              className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
-            />
-            <p className="text-xs text-google-text-tertiary mt-1">Separate multiple values with commas (OR logic)</p>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-google-text-secondary mb-1">To (recipient)</label>
-            <input
-              type="text"
-              value={form.match_to ?? ""}
-              onChange={(e) => updateField("match_to", e.target.value || null)}
-              placeholder="e.g., me+alerts@example.com, team@example.com"
-              className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
-            />
-            <p className="text-xs text-google-text-tertiary mt-1">Separate multiple values with commas (OR logic)</p>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-google-text-secondary mb-1">Subject contains</label>
-            <input
-              type="text"
-              value={form.match_subject ?? ""}
-              onChange={(e) => updateField("match_subject", e.target.value || null)}
-              placeholder="e.g., Weekly digest, Monthly report"
-              className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
-            />
-            <p className="text-xs text-google-text-tertiary mt-1">Separate multiple values with commas (OR logic)</p>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-google-text-secondary mb-1">Has words</label>
-            <input
-              type="text"
-              value={form.match_has_words ?? ""}
-              onChange={(e) => updateField("match_has_words", e.target.value || null)}
-              placeholder="e.g., unsubscribe promotion"
-              className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-google-text-secondary mb-1">Doesn't have words</label>
-            <input
-              type="text"
-              value={form.match_doesnt_have ?? ""}
-              onChange={(e) => updateField("match_doesnt_have", e.target.value || null)}
-              placeholder="e.g., important urgent"
-              className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-google-text-secondary mb-1">Match label</label>
-            <select
-              value={form.match_label_id ?? ""}
-              onChange={(e) => updateField("match_label_id", e.target.value ? Number(e.target.value) : null)}
-              className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
-            >
-              <option value="">None</option>
-              {userLabels.map((l) => (
-                <option key={l.id} value={l.id}>{l.name}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </CollapsibleSection>
-
-      {/* Scope Section */}
-      <CollapsibleSection title="Scope">
-        <p className="text-xs text-google-text-tertiary mb-2">Choose which inbox messages this rule applies to.</p>
-        <div className="flex flex-wrap gap-4">
-          <label className="flex items-center gap-2 text-sm text-google-text-secondary">
-            <input
-              type="radio"
-              name="scope"
-              checked={form.scope === "primary"}
-              onChange={() => updateField("scope", "primary")}
-              className="border-google-border"
-            />
-            Primary
-          </label>
-          <label className="flex items-center gap-2 text-sm text-google-text-secondary">
-            <input
-              type="radio"
-              name="scope"
-              checked={form.scope === "all_inbox"}
-              onChange={() => updateField("scope", "all_inbox")}
-              className="border-google-border"
-            />
-            All Inbox
-          </label>
-        </div>
-      </CollapsibleSection>
-
-      {/* Actions Section */}
-      <CollapsibleSection title="Actions">
-        <div className="flex flex-wrap gap-4">
-          <label className="flex items-center gap-2 text-sm text-google-text-secondary">
-            <input
-              type="checkbox"
-              checked={form.action_archive}
-              onChange={(e) => updateField("action_archive", e.target.checked)}
-              className="rounded border-google-border"
-            />
-            Archive
-          </label>
-          <label className="flex items-center gap-2 text-sm text-google-text-secondary">
-            <input
-              type="checkbox"
-              checked={form.action_delete}
-              onChange={(e) => updateField("action_delete", e.target.checked)}
-              className="rounded border-google-border"
-            />
-            Delete
-          </label>
-          <label className="flex items-center gap-2 text-sm text-google-text-secondary">
-            <input
-              type="checkbox"
-              checked={form.action_mark_read}
-              onChange={(e) => updateField("action_mark_read", e.target.checked)}
-              className="rounded border-google-border"
-            />
-            Mark as Read
-          </label>
-        </div>
-        <div className="mt-3">
-          <label className="block text-xs font-medium text-google-text-secondary mb-1">Apply label</label>
-          <select
-            value={form.action_label_id ?? ""}
-            onChange={(e) => updateField("action_label_id", e.target.value ? Number(e.target.value) : null)}
-            className="w-full px-3 py-2 border border-google-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue"
-          >
-            <option value="">None</option>
-            {userLabels.map((l) => (
-              <option key={l.id} value={l.id}>{l.name}</option>
-            ))}
-          </select>
-        </div>
-      </CollapsibleSection>
-
-      {/* Preview result */}
-      {preview && (
-        <div className="bg-google-bg border border-google-border rounded-lg p-3 text-sm">
-          <div className="font-medium text-google-text-secondary">
-            {preview.estimated_count} email{preview.estimated_count !== 1 ? "s" : ""} match this rule
-          </div>
-          {preview.query && (
-            <div className="text-xs text-google-text-tertiary font-mono mt-1 truncate" title={preview.query}>
-              Query: {preview.query}
-            </div>
-          )}
-          {preview.sample_subjects.length > 0 && (
-            <ul className="mt-2 space-y-1">
-              {preview.sample_subjects.map((s, i) => (
-                <li key={i} className="text-xs text-google-text-secondary truncate">- {s}</li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
-      {/* Form actions */}
-      <div className="flex gap-2 pt-2">
-        <button
-          onClick={handleSave}
-          disabled={saving || !form.name.trim()}
-          className="px-4 py-2 text-sm font-medium rounded-lg bg-google-blue text-white hover:bg-google-blue-hover disabled:opacity-50 transition-colors"
-        >
-          {saving ? "Saving..." : editingId ? "Update" : "Create"}
-        </button>
-        <button
-          onClick={handlePreview}
-          disabled={previewing}
-          className="px-4 py-2 text-sm font-medium rounded-lg border border-google-border text-google-text-secondary hover:bg-google-hover disabled:opacity-50 transition-colors"
-        >
-          {previewing ? "Checking..." : "Preview"}
-        </button>
-        <button
-          onClick={closeForm}
-          className="px-4 py-2 text-sm font-medium rounded-lg border border-google-border text-google-text-secondary hover:bg-google-hover transition-colors"
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  </div>
-  );
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-google-text">Rules</h1>
-        <button
-          onClick={openCreate}
-          className="px-4 py-2 text-sm font-medium rounded-lg bg-google-blue text-white hover:bg-google-blue-hover transition-colors"
-        >
-          Create Rule
-        </button>
+        <div>
+          <h1 className="text-2xl font-bold text-google-text">Rules</h1>
+          <p className="text-sm text-google-text-secondary">Top priority runs first. Rules continue unless stop-on-match is enabled.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setReorderOpen(true)}
+            disabled={rules.length < 2}
+            className="px-4 py-2 text-sm font-medium rounded-lg border border-google-border text-google-text-secondary hover:bg-google-hover disabled:opacity-50 transition-colors"
+          >
+            Reorder
+          </button>
+          <button
+            onClick={openCreate}
+            className="px-4 py-2 text-sm font-medium rounded-lg bg-google-blue text-white hover:bg-google-blue-hover transition-colors"
+          >
+            Create Rule
+          </button>
+        </div>
       </div>
 
       {runResult && (
         <div
-          className={`rounded-lg px-4 py-3 text-sm flex justify-between items-start gap-4 ${
+          className={`rounded-lg px-4 py-3 text-sm ${
             runResult.startsWith("Failed")
               ? "bg-gmail-red-light border border-gmail-red-border text-gmail-red"
               : "bg-google-blue-light border border-google-blue-border text-google-blue"
           }`}
         >
-          <div className="min-w-0 flex-1">
-            <div>{runResult.split("\n")[0]}</div>
-            {runResult.includes("\n") && (
-              <div className={`mt-1 text-xs font-mono truncate ${runResult.startsWith("Failed") ? "text-gmail-red" : "text-google-blue"}`} title={runResult.split("\n").slice(1).join(" ")}>
-                {runResult.split("\n").slice(1).join(" ")}
-              </div>
-            )}
-          </div>
-          <button onClick={() => setRunResult(null)} className={runResult.startsWith("Failed") ? "text-gmail-red hover:text-gmail-red-hover flex-shrink-0" : "text-google-blue hover:text-google-blue-hover flex-shrink-0"}>&times;</button>
+          <div>{runResult.split("\n")[0]}</div>
+          {runResult.includes("\n") && <div className="text-xs font-mono truncate mt-1">{runResult.split("\n")[1]}</div>}
         </div>
       )}
-
-      {formModal}
 
       <ConfirmDialog
         open={!!confirmDeleteRule}
@@ -582,116 +313,158 @@ export function RulesPage() {
         onCancel={() => setConfirmDeleteRule(null)}
       />
 
-      <div className="max-w-4xl space-y-4">
-        <div className="mb-2">
-          <h2 className="text-lg font-semibold text-google-text">Rules (priority order)</h2>
-          <p className="text-sm text-google-text-secondary">Top rules run first. Drag to reorder.</p>
-        </div>
-        {rules.map((rule, idx) => (
-          <div
-            key={rule.id}
-            onDragOver={(e) => handleDragOver(e, idx)}
-            onDrop={handleDrop}
-            onDragEnd={handleDragEnd}
-            className={`bg-white rounded-2xl border border-google-border shadow-sm p-6 transition-colors ${
-              dragOver === idx ? "ring-2 ring-google-blue bg-google-blue-light/50" : ""
-            }`}
-          >
-            <div className="flex items-start justify-between">
-              <div className="flex items-start gap-3 flex-1 min-w-0">
-                <div className="flex flex-col items-center gap-0.5 flex-shrink-0">
+      <ReorderRulesDialog
+        open={reorderOpen}
+        rules={rules}
+        saving={savingOrder}
+        onCancel={() => setReorderOpen(false)}
+        onSave={handleSaveOrder}
+      />
+
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="space-y-2">
+          {rules.map((rule, idx) => (
+            <button
+              key={rule.id}
+              type="button"
+              onClick={() => setSelectedRuleId(rule.id)}
+              className={`w-full text-left bg-white border rounded-xl px-3 py-3 transition-colors ${
+                selectedRuleId === rule.id ? "border-google-blue ring-2 ring-google-blue-light" : "border-google-border"
+              }`}
+            >
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-google-text-secondary">#{idx + 1}</span>
-                  <div
-                    draggable
-                    onDragStart={() => handleDragStart(idx)}
-                    className="pt-1 cursor-grab active:cursor-grabbing touch-none"
-                  >
-                    <GripIcon />
-                  </div>
+                  <span className={`inline-block w-2 h-2 rounded-full ${rule.enabled ? "bg-google-green" : "bg-google-border"}`} />
+                  <span className="font-medium text-google-text truncate">{rule.name}</span>
+                  {rule.stop_on_match && <Badge text="Stop on match" tone="purple" />}
                 </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${rule.enabled ? "bg-google-green" : "bg-google-border"}`} />
-                      <span className="font-medium text-google-text truncate">{rule.name}</span>
-                    </div>
-                    <div className="mt-2 text-xs text-google-text-secondary space-y-1">
-                      {rule.match_from && <div>From: {rule.match_from}</div>}
-                      {rule.match_to && <div>To: {rule.match_to}</div>}
-                      {rule.match_subject && <div>Subject: {rule.match_subject}</div>}
-                      {rule.match_has_words && <div>Words: {rule.match_has_words}</div>}
-                      {rule.match_doesnt_have && <div>Excludes: {rule.match_doesnt_have}</div>}
-                      {rule.match_label_id && <div>Match label: {labelName(rule.match_label_id) ?? `#${rule.match_label_id}`}</div>}
-                      {rule.action_label_id && <div>Apply label: {labelName(rule.action_label_id) ?? `#${rule.action_label_id}`}</div>}
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {getScopeBadges(rule).map(s => (
-                        <span key={s} className="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">{s}</span>
-                      ))}
-                      {rule.action_label_id && (
-                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-google-yellow-light text-google-yellow-text">
-                          Label: {labelName(rule.action_label_id) ?? `#${rule.action_label_id}`}
-                        </span>
-                      )}
-                      {rule.action_archive && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-google-blue-light text-google-blue">Archive</span>}
-                      {rule.action_delete && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gmail-red-light text-gmail-red">Delete</span>}
-                      {rule.action_mark_read && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-google-green-light text-google-green">Mark Read</span>}
-                    </div>
-                    {/* Rule stats */}
-                    {rule.total_matched > 0 && (
-                      <div className="mt-2 text-xs text-google-text-tertiary">
-                        {rule.total_matched} email{rule.total_matched !== 1 ? "s" : ""} matched
-                        {rule.last_matched_at && ` · last ${relativeTime(rule.last_matched_at)}`}
-                      </div>
-                    )}
-                  </div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {summarizeConditions(rule).map((item) => (
+                    <Badge key={item} text={item} />
+                  ))}
                 </div>
-                <div className="flex items-center gap-2 ml-4 flex-shrink-0">
-                  <div className="flex flex-col gap-0.5">
-                    <button
-                      onClick={() => handleMoveUp(idx)}
-                      disabled={idx === 0}
-                      className="p-1 rounded border border-google-border text-google-text-secondary hover:bg-google-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                      title="Move up"
-                    >
-                      <ChevronUpIcon />
-                    </button>
-                    <button
-                      onClick={() => handleMoveDown(idx)}
-                      disabled={idx === rules.length - 1}
-                      className="p-1 rounded border border-google-border text-google-text-secondary hover:bg-google-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                      title="Move down"
-                    >
-                      <ChevronDownIcon />
-                    </button>
-                  </div>
-                  <button
-                    onClick={() => handleRun(rule)}
-                    disabled={runningId === rule.id}
-                    className="px-3 py-1.5 text-xs font-medium rounded-md border border-google-border text-google-text-secondary hover:bg-google-hover disabled:opacity-50 transition-colors"
-                  >
-                    {runningId === rule.id ? "Running..." : "Run"}
-                  </button>
-                  <button
-                    onClick={() => openEdit(rule)}
-                    className="px-3 py-1.5 text-xs font-medium rounded-md border border-google-border text-google-text-secondary hover:bg-google-hover transition-colors"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => handleDeleteClick(rule)}
-                    className="px-3 py-1.5 text-xs font-medium rounded-md border border-gmail-red-border text-gmail-red hover:bg-gmail-red-light transition-colors"
-                  >
-                    Delete
-                  </button>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {summarizeActions(rule).map((item) => (
+                    <Badge key={`${rule.id}-${item}`} text={item} tone="blue" />
+                  ))}
+                  <Badge text={rule.scope === "all_inbox" ? "All Inbox" : "Primary"} tone="purple" />
                 </div>
               </div>
+            </button>
+          ))}
+          {rules.length === 0 && (
+            <div className="bg-white rounded-xl border border-google-border p-6 text-center text-google-text-secondary">
+              No rules yet. Click "Create Rule" to get started.
             </div>
-        ))}
-        {rules.length === 0 && !showForm && (
-          <div className="bg-white rounded-2xl border border-google-border shadow-sm p-8 text-center text-google-text-secondary">
-            No rules yet. Click "Create Rule" to get started.
-          </div>
-        )}
+          )}
+        </div>
+
+        <aside className="bg-white border border-google-border rounded-2xl p-4 space-y-4 h-fit xl:sticky xl:top-4">
+          {isFormOpen ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-google-text">{editingId === -1 ? "Create Rule" : "Edit Rule"}</h2>
+                <button onClick={closeForm} className="text-sm text-google-text-secondary hover:text-google-text">Close</button>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-google-text-secondary mb-1">Rule Name</label>
+                <input
+                  type="text"
+                  value={form.name ?? ""}
+                  onChange={(e) => updateField("name", e.target.value)}
+                  className="w-full px-3 py-2 border border-google-border rounded-lg text-sm"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-google-text-secondary">
+                <input type="checkbox" checked={!!form.enabled} onChange={(e) => updateField("enabled", e.target.checked)} />
+                Rule enabled
+              </label>
+              <div className="grid grid-cols-1 gap-2">
+                <input className="px-3 py-2 border border-google-border rounded-lg text-sm" placeholder="From" value={form.match_from ?? ""} onChange={(e) => updateField("match_from", e.target.value || null)} />
+                <input className="px-3 py-2 border border-google-border rounded-lg text-sm" placeholder="From excludes" value={form.match_from_exclude ?? ""} onChange={(e) => updateField("match_from_exclude", e.target.value || null)} />
+                <input className="px-3 py-2 border border-google-border rounded-lg text-sm" placeholder="To" value={form.match_to ?? ""} onChange={(e) => updateField("match_to", e.target.value || null)} />
+                <input className="px-3 py-2 border border-google-border rounded-lg text-sm" placeholder="Subject contains" value={form.match_subject ?? ""} onChange={(e) => updateField("match_subject", e.target.value || null)} />
+                <input className="px-3 py-2 border border-google-border rounded-lg text-sm" placeholder="Has words" value={form.match_has_words ?? ""} onChange={(e) => updateField("match_has_words", e.target.value || null)} />
+                <input className="px-3 py-2 border border-google-border rounded-lg text-sm" placeholder="Doesn't have words" value={form.match_doesnt_have ?? ""} onChange={(e) => updateField("match_doesnt_have", e.target.value || null)} />
+                <select className="px-3 py-2 border border-google-border rounded-lg text-sm" value={form.match_label_id ?? ""} onChange={(e) => updateField("match_label_id", e.target.value ? Number(e.target.value) : null)}>
+                  <option value="">Match label: none</option>
+                  {userLabels.map((label) => <option key={label.id} value={label.id}>{label.name}</option>)}
+                </select>
+                <select className="px-3 py-2 border border-google-border rounded-lg text-sm" value={form.action_label_id ?? ""} onChange={(e) => updateField("action_label_id", e.target.value ? Number(e.target.value) : null)}>
+                  <option value="">Apply label: none</option>
+                  {userLabels.map((label) => <option key={label.id} value={label.id}>{label.name}</option>)}
+                </select>
+                <div className="flex flex-wrap gap-3 text-sm text-google-text-secondary">
+                  <label className="flex items-center gap-2"><input type="checkbox" checked={!!form.action_archive} onChange={(e) => updateField("action_archive", e.target.checked)} />Archive</label>
+                  <label className="flex items-center gap-2"><input type="checkbox" checked={!!form.action_delete} onChange={(e) => updateField("action_delete", e.target.checked)} />Delete</label>
+                  <label className="flex items-center gap-2"><input type="checkbox" checked={!!form.action_mark_read} onChange={(e) => updateField("action_mark_read", e.target.checked)} />Mark read</label>
+                </div>
+                <label className="flex items-start gap-2 text-sm text-google-text-secondary">
+                  <input type="checkbox" className="mt-0.5" checked={!!form.stop_on_match} onChange={(e) => updateField("stop_on_match", e.target.checked)} />
+                  <span>Stop processing later rules when this rule matches.</span>
+                </label>
+                <div className="flex gap-4 text-sm text-google-text-secondary">
+                  <label className="flex items-center gap-2"><input type="radio" name="scope" checked={form.scope === "primary"} onChange={() => updateField("scope", "primary")} />Primary</label>
+                  <label className="flex items-center gap-2"><input type="radio" name="scope" checked={form.scope === "all_inbox"} onChange={() => updateField("scope", "all_inbox")} />All Inbox</label>
+                </div>
+              </div>
+              {preview && (
+                <div className="bg-google-bg border border-google-border rounded-lg p-3 text-sm">
+                  <div className="font-medium text-google-text-secondary">
+                    {preview.estimated_count} email{preview.estimated_count === 1 ? "" : "s"} match this rule
+                  </div>
+                  {preview.query && <div className="mt-1 text-xs font-mono text-google-text-tertiary truncate">Query: {preview.query}</div>}
+                </div>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <button onClick={handleSave} disabled={saving || !form.name?.trim()} className="px-4 py-2 text-sm rounded-lg bg-google-blue text-white hover:bg-google-blue-hover disabled:opacity-50">
+                  {saving ? "Saving..." : editingId === -1 ? "Create" : "Update"}
+                </button>
+                <button onClick={handlePreview} disabled={previewing} className="px-4 py-2 text-sm rounded-lg border border-google-border text-google-text-secondary hover:bg-google-hover">
+                  {previewing ? "Checking..." : "Preview"}
+                </button>
+                <button onClick={closeForm} className="px-4 py-2 text-sm rounded-lg border border-google-border text-google-text-secondary hover:bg-google-hover">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : selectedRule ? (
+            <div className="space-y-3">
+              <h2 className="text-lg font-semibold text-google-text truncate">{selectedRule.name}</h2>
+              <div className="flex flex-wrap gap-1.5">
+                <Badge text={selectedRule.enabled ? "Enabled" : "Disabled"} tone={selectedRule.enabled ? "green" : "neutral"} />
+                <Badge text={selectedRule.scope === "all_inbox" ? "All Inbox" : "Primary"} tone="purple" />
+                {selectedRule.stop_on_match && <Badge text="Stops evaluation" tone="purple" />}
+              </div>
+              <div className="text-sm text-google-text-secondary space-y-1">
+                {selectedRule.match_from && <div>From: {selectedRule.match_from}</div>}
+                {selectedRule.match_from_exclude && <div>From excludes: {selectedRule.match_from_exclude}</div>}
+                {selectedRule.match_to && <div>To: {selectedRule.match_to}</div>}
+                {selectedRule.match_subject && <div>Subject: {selectedRule.match_subject}</div>}
+                {selectedRule.match_has_words && <div>Has words: {selectedRule.match_has_words}</div>}
+                {selectedRule.match_doesnt_have && <div>Doesn't have: {selectedRule.match_doesnt_have}</div>}
+                {selectedRule.match_label_id && <div>Match label: {labelName(selectedRule.match_label_id)}</div>}
+                {selectedRule.action_label_id && <div>Apply label: {labelName(selectedRule.action_label_id)}</div>}
+              </div>
+              {(selectedRule.total_matched > 0 || selectedRule.last_matched_at) && (
+                <div className="text-xs text-google-text-tertiary">
+                  {selectedRule.total_matched} matched
+                  {selectedRule.last_matched_at && ` · last ${relativeTime(selectedRule.last_matched_at)}`}
+                </div>
+              )}
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button onClick={() => handleRun(selectedRule)} disabled={runningId === selectedRule.id} className="px-3 py-1.5 text-xs rounded-md border border-google-border text-google-text-secondary hover:bg-google-hover">
+                  {runningId === selectedRule.id ? "Running..." : "Run"}
+                </button>
+                <button onClick={() => openEdit(selectedRule)} className="px-3 py-1.5 text-xs rounded-md border border-google-border text-google-text-secondary hover:bg-google-hover">Edit</button>
+                <button onClick={() => setConfirmDeleteRule(selectedRule)} className="px-3 py-1.5 text-xs rounded-md border border-gmail-red-border text-gmail-red hover:bg-gmail-red-light">Delete</button>
+              </div>
+            </div>
+          ) : (
+            <div className="text-sm text-google-text-secondary">Select a rule to view details, or create a new one.</div>
+          )}
+        </aside>
       </div>
     </div>
   );
