@@ -123,6 +123,16 @@ export function AIPage({ status, onStatusChange }: Props) {
     void loadRetroRuns();
   }, [status.ai_enabled, loadRetroRuns]);
 
+  /** Re-attach to an in-flight job after navigation away (state is lost on unmount). */
+  useEffect(() => {
+    if (!status.ai_enabled) return;
+    if (retroJobId != null) return;
+    const active = retroRuns.find((j) => j.status === "pending" || j.status === "running");
+    if (!active) return;
+    setRetroJobId(active.id);
+    setRetroJob(active);
+  }, [status.ai_enabled, retroJobId, retroRuns]);
+
   const triageLabels = useMemo(() => labels.filter((l) => isTriageLabel(l.name)), [labels]);
 
   const dirtyDescriptionIds = useMemo(
